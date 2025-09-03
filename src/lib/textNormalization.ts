@@ -1,8 +1,75 @@
-
 export const normalizeWhitespace = (text: string): string => {
   if (!text) return '';
   // Replace any sequence of whitespace characters (including newlines) with a single space, then trim.
   return text.replace(/\s+/g, ' ').trim();
+};
+
+interface TextNodeInfo {
+  node: Text;
+  normalizedText: string;
+  rawStart: number;
+  rawEnd: number;
+  normalizedStart: number;
+  normalizedEnd: number;
+}
+
+export const buildTextNodeMap = (container: HTMLElement): TextNodeInfo[] => {
+  const walker = document.createTreeWalker(
+    container,
+    NodeFilter.SHOW_TEXT,
+    (node) => {
+      const text = (node as Text).textContent || '';
+      // Only include text nodes that have meaningful content
+      return text.trim().length > 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    }
+  );
+  
+  const textNodes: TextNodeInfo[] = [];
+  let normalizedPos = 0;
+  let rawPos = 0;
+  let textNode;
+  
+  while ((textNode = walker.nextNode() as Text)) {
+    const rawText = textNode.textContent || '';
+    const normalizedText = normalizeWhitespace(rawText);
+    
+    if (normalizedText.length > 0) {
+      // Add space before this node if it's not the first one
+      if (textNodes.length > 0) {
+        normalizedPos += 1;
+      }
+      
+      textNodes.push({
+        node: textNode,
+        normalizedText,
+        rawStart: rawPos,
+        rawEnd: rawPos + rawText.length,
+        normalizedStart: normalizedPos,
+        normalizedEnd: normalizedPos + normalizedText.length
+      });
+      
+      normalizedPos += normalizedText.length;
+    }
+    
+    rawPos += rawText.length;
+  }
+  
+  return textNodes;
+};
+
+// Simpler approach: just get the text content and normalize it
+export const getFullNormalizedText = (container: HTMLElement): string => {
+  // Get all text content from the container
+  const fullRawText = container.textContent || '';
+  const normalizedText = normalizeWhitespace(fullRawText);
+  
+  console.log('getFullNormalizedText (simple approach):', {
+    rawLength: fullRawText.length,
+    normalizedLength: normalizedText.length,
+    preview: normalizedText.substring(0, 100) + (normalizedText.length > 100 ? '...' : '')
+  });
+  
+  return normalizedText;
 };
 
 export const calculateNormalizedOffsets = (
@@ -20,20 +87,124 @@ export const calculateNormalizedOffsets = (
     return null;
   }
   
-  // To get the correct starting position, we create a temporary range
-  // from the beginning of the container to the start of the user's selection.
-  const preRange = range.cloneRange();
-  preRange.selectNodeContents(container);
-  preRange.setEnd(range.startContainer, range.startOffset);
+  try {
+    // Simpler approach: use the full text and search for the selected text
+    const fullNormalizedText = getFullNormalizedText(container);
+    
+    // First try: get text before selection using DOM ranges
+    let normalizedStart = 0;
+    try {
+      const preRange = range.cloneRange();
+      preRange.selectNodeContents(container);
+      preRange.setEnd(range.startContainer, range.startOffset);
+      const preText = preRange.toString();
+      const normalizedPreText = normalizeWhitespace(preText);
+      normalizedStart = normalizedPreText.length;
+    } catch (e) {
+      // DOM range approach failed, fall back to search
+      const searchIndex = fullNormalizedText.indexOf(normalizedSelectedText);
+      if (searchIndex !== -1) {
+        normalizedStart = searchIndex;
+      } else {
+        console.warn('Could not find selected text in normalized content');
+        return null;
+      }
+    }
+    
+    const normalizedEnd = normalizedStart + normalizedSelectedText.length;
+    
+    // Validate the result
+    const extractedText = fullNormalizedText.substring(normalizedStart, normalizedEnd);
+    if (normalizeWhitespace(extractedText) === normalizedSelectedText) {
+      console.log('Selection offset calculation successful:', {
+        selectedText: normalizedSelectedText,
+        start: normalizedStart,
+        end: normalizedEnd,
+        extractedMatch: extractedText === normalizedSelectedText
+      });
+      
+      return {
+        start: normalizedStart,
+        end: normalizedEnd,
+        text: normalizedSelectedText
+      };
+    } else {
+      // Fall back to search-based approach
+      console.log('Range-based calculation failed, using search fallback');
+      const searchIndex = fullNormalizedText.indexOf(normalizedSelectedText);
+      if (searchIndex !== -1) {
+        return {
+          start: searchIndex,
+          end: searchIndex + normalizedSelectedText.length,
+          text: normalizedSelectedText
+        };
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.warn('Error calculating normalized offsets:', error);
+    return null;
+  }
+};
+
+const mapNormalizedOffsetToRaw = (
+  rawText: string,
+  normalizedOffset: number
+): number => {
+  if (normalizedOffset <= 0) return 0;
   
-  // The length of the normalized text of this pre-range is our start offset.
-  // This correctly calculates the position regardless of where the selection is.
-  const start = normalizeWhitespace(preRange.toString()).length;
-  const end = start + normalizedSelectedText.length;
+  let normalizedPos = 0;
+  let rawPos = 0;
+  let wasWhitespace = false;
   
-  return {
-    start: start,
-    end: end,
-    text: normalizedSelectedText
-  };
+  for (let i = 0; i < rawText.length; i++) {
+    const char = rawText[i];
+    const isWhitespace = /\s/.test(char);
+    
+    if (normalizedPos === normalizedOffset) {
+      return rawPos;
+    }
+    
+    // Advance normalized position for non-whitespace or first whitespace in sequence
+    if (!isWhitespace) {
+      normalizedPos++;
+      wasWhitespace = false;
+    } else if (!wasWhitespace) {
+      normalizedPos++;
+      wasWhitespace = true;
+    }
+    
+    rawPos = i + 1;
+  }
+  
+  return rawPos;
+};
+
+export const findTextNodeAtNormalizedOffset = (
+  textNodes: TextNodeInfo[],
+  normalizedOffset: number
+): { nodeInfo: TextNodeInfo; offsetInNode: number } | null => {
+  let currentPos = 0;
+  
+  for (let i = 0; i < textNodes.length; i++) {
+    const nodeInfo = textNodes[i];
+    const nodeStart = currentPos;
+    const nodeEnd = currentPos + nodeInfo.normalizedText.length;
+    
+    if (normalizedOffset >= nodeStart && normalizedOffset <= nodeEnd) {
+      const offsetInNormalizedText = normalizedOffset - nodeStart;
+      const offsetInRawText = mapNormalizedOffsetToRaw(
+        nodeInfo.node.textContent!,
+        offsetInNormalizedText
+      );
+      return { nodeInfo, offsetInNode: offsetInRawText };
+    }
+    
+    currentPos = nodeEnd;
+    if (i < textNodes.length - 1) {
+      currentPos += 1; // Add space between nodes
+    }
+  }
+  return null;
 };

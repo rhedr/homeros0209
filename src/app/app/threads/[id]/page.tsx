@@ -362,11 +362,14 @@ export default function ThreadPage() {
   };
 
   const handleHighlightCreate = (highlightData: CreateHighlightData) => {
+    console.log('handleHighlightCreate called with:', highlightData);
     const newHighlight: Highlight = {
         ...highlightData,
         id: uuidv4(),
     };
+    console.log('New highlight created:', newHighlight);
     const updatedHighlights = [...highlights, newHighlight];
+    console.log('Updated highlights array:', updatedHighlights);
     setHighlights(updatedHighlights);
     updateThreadInStorage(threadId, { highlights: updatedHighlights });
     toast({ title: "Highlight created!"});

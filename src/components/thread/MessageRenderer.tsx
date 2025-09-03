@@ -45,12 +45,28 @@ const HighlightMenu = ({ selection, onHighlight, onClose }: { selection: Selecti
   };
   
   return (
-    <div style={style} className="highlight-menu" onMouseDown={(e) => e.preventDefault()}>
+    <div 
+      style={style} 
+      className="highlight-menu" 
+      onMouseDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
       <PaintBucket size={16} className="text-gray-600" />
       {colors.map(color => (
         <button
           key={color}
-          onClick={() => onHighlight(color)}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onHighlight(color);
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
           style={{
             width: '24px',
             height: '24px',
@@ -64,7 +80,15 @@ const HighlightMenu = ({ selection, onHighlight, onClose }: { selection: Selecti
         />
       ))}
       <button 
-        onClick={onClose}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }}
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
         className="p-1 hover:bg-gray-100 rounded ml-2"
         aria-label="Close highlight menu"
       >
@@ -88,6 +112,8 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
 }) => {
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const messageRef = useRef<HTMLDivElement>(null);
+  const [lastClickTime, setLastClickTime] = useState(0);
+  const [clickCount, setClickCount] = useState(0);
   
   const getSelectionInfo = useCallback((): SelectionInfo | null => {
     const sel = window.getSelection();
@@ -95,12 +121,30 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     
     try {
       const range = sel.getRangeAt(0);
-      if (!messageRef.current.contains(range.commonAncestorContainer)) {
+      
+      // Check if selection is within our message container
+      // Use a more robust check that handles cross-element selections
+      const startInMessage = messageRef.current.contains(range.startContainer) || 
+                           messageRef.current === range.startContainer;
+      const endInMessage = messageRef.current.contains(range.endContainer) || 
+                         messageRef.current === range.endContainer;
+      
+      if (!startInMessage || !endInMessage) {
         return null;
       }
       
       const offsets = calculateNormalizedOffsets(messageRef.current, sel);
-      if (!offsets) return null;
+      if (!offsets) {
+        return null;
+      }
+      
+      // Debug: Compare selected text with what we'll store
+      console.log('Selection comparison:', {
+        rawSelected: sel.toString(),
+        normalizedSelected: offsets.text,
+        calculatedOffsets: { start: offsets.start, end: offsets.end },
+        messageId: message.id
+      });
       
       return {
         text: offsets.text,
@@ -116,15 +160,82 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     }
   }, [message.id]);
   
-  const handleMouseUp = useCallback(() => {
+  const handleMouseDown = useCallback((event: MouseEvent) => {
+    // Track click timing to detect triple-clicks
+    const currentTime = Date.now();
+    const timeDiff = currentTime - lastClickTime;
+    
+    if (timeDiff < 500) { // Within 500ms, likely a multi-click
+      setClickCount(prev => prev + 1);
+    } else {
+      setClickCount(1);
+    }
+    
+    setLastClickTime(currentTime);
+  }, [lastClickTime]);
+
+  const handleMouseUp = useCallback((event: MouseEvent) => {
+    // Only process selection if we're not clicking on the highlight menu
+    const target = event.target as HTMLElement;
+    if (target.closest('.highlight-menu')) {
+      return;
+    }
+    
+    // Use a timeout to ensure selection is stable
     setTimeout(() => {
+      const sel = window.getSelection();
+      
+      // Only show menu if there's a non-collapsed selection
+      if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+        setSelection(null);
+        return;
+      }
+      
+      // Don't show menu for triple-clicks (clickCount will be 3)
+      if (clickCount >= 3) {
+        console.log('Triple-click detected, not showing highlight menu');
+        setSelection(null);
+        return;
+      }
+      
       const selectionInfo = getSelectionInfo();
       setSelection(selectionInfo);
     }, 10);
-  }, [getSelectionInfo]);
+  }, [getSelectionInfo, clickCount]);
+  
+  
+  // Clear selection when clicking outside the message
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      
+      // Don't clear if clicking on the highlight menu
+      if (target.closest('.highlight-menu')) {
+        return;
+      }
+      
+      if (messageRef.current && !messageRef.current.contains(event.target as Node)) {
+        setSelection(null);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
   
   const handleHighlight = useCallback((color: string) => {
     if (!selection) return;
+    
+    console.log('Creating highlight:', {
+      messageId: message.id,
+      text: selection.text,
+      start: selection.start,
+      end: selection.end,
+      color: color,
+    });
     
     onHighlightCreate({
       messageId: message.id,
@@ -140,7 +251,9 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
   
   useEffect(() => {
     if (messageRef.current) {
-        applyNormalizedHighlights(messageRef.current, highlights.filter(h => h.messageId === message.id));
+        const messageHighlights = highlights.filter(h => h.messageId === message.id);
+        console.log('Applying highlights to message:', message.id, messageHighlights);
+        applyNormalizedHighlights(messageRef.current, messageHighlights);
     }
   }, [highlights, message.id, message.text]);
   
@@ -150,6 +263,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         ref={messageRef}
         className="message-content"
         data-message-id={message.id}
+        onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         style={{ userSelect: 'text' }}
       >
