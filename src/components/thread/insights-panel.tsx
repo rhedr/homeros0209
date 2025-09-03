@@ -3,6 +3,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "../ui/scroll-area";
 import { Quote, Loader2, Dot, ClipboardCheck, PanelRight, Trash2, PanelLeft } from 'lucide-react';
 import type { GenerateThreadAbstractOutput, Reference } from "@/ai/flows/types/thread-abstract-types";
+import type { ThreadReference } from "@/lib/referenceProcessor";
 import { useMemo, useState } from "react";
 import { Button } from "../ui/button";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,8 @@ type InsightsPanelProps = {
   onActionItemClick?: (actionText: string) => void;
   onReferenceClick?: (ref: Reference) => void;
   onHighlightClick?: (highlight: Highlight) => void;
+  threadReferences: ThreadReference[];
+  onThreadReferenceClick?: (ref: ThreadReference) => void;
 };
 
 
@@ -51,6 +54,8 @@ export function InsightsPanel({
     onActionItemClick,
     onReferenceClick,
     onHighlightClick,
+    threadReferences,
+    onThreadReferenceClick,
 }: InsightsPanelProps) {
   const [selectedColors, setSelectedColors] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('summary');
@@ -132,25 +137,46 @@ export function InsightsPanel({
                 <TabsContent value="references" className="h-full">
                      <ScrollArea className="h-full p-4">
                         <div className="pb-4">
-                            {abstractData?.references && abstractData.references.length > 0 ? (
-                                <ol className="space-y-2 text-sm text-muted-foreground list-decimal list-inside">
-                                {abstractData.references.map((ref, index) => (
+                            {threadReferences && threadReferences.length > 0 ? (
+                                <ol className="space-y-3 text-sm">
+                                {threadReferences.map((ref) => (
                                     <li
-                                    key={index}
-                                    className="cursor-pointer hover:text-foreground transition-colors"
-                                    onClick={() => onReferenceClick?.(ref)}
+                                    key={ref.id}
+                                    className="cursor-pointer hover:bg-accent/50 p-2 rounded-md transition-colors border-l-2 border-primary/20"
+                                    onClick={() => onThreadReferenceClick?.(ref)}
                                     role="button"
                                     tabIndex={0}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onReferenceClick?.(ref) }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onThreadReferenceClick?.(ref) }}
                                     >
-                                    <span className="break-words">{ref.text}</span>
+                                    <div className="flex items-start gap-2">
+                                        <span className="font-medium text-primary text-xs bg-primary/10 px-1.5 py-0.5 rounded shrink-0">
+                                            {ref.number}
+                                        </span>
+                                        <div className="flex-1 min-w-0">
+                                            <span className="break-words text-foreground">{ref.text}</span>
+                                            {ref.url && (
+                                                <div className="mt-1">
+                                                    <a 
+                                                        href={ref.url} 
+                                                        target="_blank" 
+                                                        rel="noopener noreferrer"
+                                                        className="text-xs text-blue-600 hover:underline break-all"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        {ref.url}
+                                                    </a>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                     </li>
                                 ))}
                                 </ol>
                             ) : (
                                 <div className="h-full flex items-center justify-center">
                                 <p className="text-sm text-muted-foreground text-center">
-                                    {isLoadingAbstract ? 'Loading references...' : 'No references found in this thread yet.'}
+                                    No references found in this thread yet.<br />
+                                    <span className="text-xs">References will appear as you chat with Homeros.</span>
                                 </p>
                                 </div>
                             )}

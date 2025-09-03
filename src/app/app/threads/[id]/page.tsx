@@ -34,6 +34,10 @@ import { cn } from '@/lib/utils';
 import { escapeRegExp } from '@/lib/utils';
 import type { GenerateSearchQueryOutput } from '@/ai/flows/types/search-query-types';
 import type { ConversationalChatInput, ConversationalChatOutput } from '@/ai/flows/types/conversational-chat-types';
+import { processMessageReferences, updateThreadReferences } from '@/lib/referenceProcessor';
+import { validateThreadReferences, repairThreadReferences } from '@/lib/referenceValidation';
+import { migrateAllThreadsInStorage, needsMigration, migrateThreadReferences } from '@/lib/referenceMigration';
+import type { ThreadReference as LibThreadReference } from '@/lib/referenceProcessor';
 import { v4 as uuidv4 } from 'uuid';
 
 type Message = {
@@ -58,6 +62,8 @@ type Reference = {
     messageId: string;
 };
 
+type ThreadReference = LibThreadReference;
+
 type ThreadData = {
   id: string;
   title: string;
@@ -68,6 +74,8 @@ type ThreadData = {
   messages: Message[];
   highlights: Highlight[];
   references: Reference[];
+  threadReferences: ThreadReference[];
+  referenceCounter: number;
   colorDescriptions?: Record<string, string>;
 };
 
@@ -96,12 +104,13 @@ export default function ThreadPage() {
   const queryClient = useQueryClient();
   
   const { toast } = useToast();
-  const threadId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const threadId = Array.isArray(params.id) ? params.id[0] : params.id || '';
   
   const [threadData, setThreadData] = useState<ThreadData | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [title, setTitle] = useState("Conversation");
   const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [threadReferences, setThreadReferences] = useState<ThreadReference[]>([]);
   const [isInsightsPanelCollapsed, setIsInsightsPanelCollapsed] = useState(false);
   
   const [threadSearchQuery, setThreadSearchQuery] = useState('');
@@ -152,7 +161,20 @@ export default function ThreadPage() {
   const chatMutation = useMutation({
     mutationFn: conversationalChat,
     onSuccess: async (response, variables) => {
-        const aiMessage: Message = { role: 'ai', text: response.message, id: `ai-${Date.now()}`, timestamp: new Date().toISOString()};
+        const aiMessageId = `ai-${Date.now()}`;
+        
+        // Process references in the AI response
+        const { processedText, newReferences } = processMessageReferences(
+          response.message,
+          aiMessageId,
+          threadReferences
+        );
+        
+        const aiMessage: Message = { role: 'ai', text: processedText, id: aiMessageId, timestamp: new Date().toISOString()};
+        
+        // Update thread references
+        const updatedThreadReferences = updateThreadReferences(threadReferences, newReferences);
+        setThreadReferences(updatedThreadReferences);
         
         setMessages(currentMessages => {
             const updatedMessages = currentMessages.map(m => m.id === 'thinking' ? aiMessage : m);
@@ -160,8 +182,17 @@ export default function ThreadPage() {
             setThreadData(prevData => {
               if (!prevData) return null;
 
-              const updatedData = { ...prevData, messages: updatedMessages };
-              updateThreadInStorage(threadId, { messages: updatedMessages });
+              const updatedData = { 
+                ...prevData, 
+                messages: updatedMessages, 
+                threadReferences: updatedThreadReferences,
+                referenceCounter: Math.max(...updatedThreadReferences.map(r => r.number), 0)
+              };
+              updateThreadInStorage(threadId, { 
+                messages: updatedMessages, 
+                threadReferences: updatedThreadReferences,
+                referenceCounter: updatedData.referenceCounter
+              });
               return updatedData;
             });
 
@@ -170,7 +201,7 @@ export default function ThreadPage() {
 
         const isNewThread = threadId.startsWith('new-');
         if (isNewThread && messages.length <= 2) {
-             const threadText = `User: ${variables.message}\nAI: ${response.message}`;
+             const threadText = `User: ${variables.message}\nAI: ${processedText}`;
              const summary = await summarizeThreadForTitle({ threadText });
              if (summary) {
                  const updated = updateThreadInStorage(threadId, { title: summary.title, snippet: summary.snippet });
@@ -224,11 +255,33 @@ export default function ThreadPage() {
         }
 
         if (storedData) {
+            // Check if thread needs migration
+            if (needsMigration(storedData)) {
+                console.log('Migrating thread to new reference system...');
+                const migratedData = migrateThreadReferences(storedData);
+                // Save migrated data back to localStorage
+                localStorage.setItem(`thread-${threadId}`, JSON.stringify(migratedData));
+                storedData = migratedData;
+            }
+            
+            // Validate and repair references if needed
+            const validation = validateThreadReferences(storedData.threadReferences || []);
+            if (!validation.isValid) {
+                console.warn('Thread references validation failed:', validation.errors);
+                const { repaired, issues } = repairThreadReferences(storedData.threadReferences || []);
+                if (issues.length > 0) {
+                    console.log('Reference repair issues:', issues);
+                }
+                storedData.threadReferences = repaired;
+                localStorage.setItem(`thread-${threadId}`, JSON.stringify(storedData));
+            }
+            
             // Loading an existing thread
             setThreadData(storedData);
             setTitle(storedData.title);
             setMessages(storedData.messages || []);
             setHighlights(storedData.highlights || []);
+            setThreadReferences(storedData.threadReferences || []);
         } else if (isNewThread && initialQuery) {
             // Creating a new thread
             const newThreadData: ThreadData = {
@@ -241,12 +294,15 @@ export default function ThreadPage() {
                 messages: [],
                 highlights: [],
                 references: [],
+                threadReferences: [],
+                referenceCounter: 0,
             };
             try {
                 localStorage.setItem(`thread-${threadId}`, JSON.stringify(newThreadData));
                 setThreadData(newThreadData);
                 setTitle(newThreadData.title);
-                setMessages([]); // Start with empty messages
+                setMessages([]);
+                setThreadReferences([]); // Start with empty messages
             } catch (error) {
                 console.error("Could not save new thread to localStorage", error);
                 toast({
@@ -396,6 +452,11 @@ export default function ThreadPage() {
     setTimeout(() => setActiveReference(null), 3000);
   };
 
+  const handleThreadReferenceClick = (ref: ThreadReference) => {
+    setActiveReference({ messageId: ref.messageId, text: ref.text });
+    setTimeout(() => setActiveReference(null), 3000);
+  };
+
   const handleHighlightClick = (highlight: Highlight) => {
     setActiveHighlight({ messageId: highlight.messageId, text: highlight.text });
     setTimeout(() => setActiveHighlight(null), 3000);
@@ -482,10 +543,27 @@ export default function ThreadPage() {
   };
 
   const { data: abstractData, isLoading: isLoadingAbstract } = useQuery({
-    queryKey: ['threadAbstract', threadId, messages.map(m => m.id).join('-')],
+    queryKey: ['threadAbstract', threadId, messages.map(m => m.id).join('-'), threadReferences.length],
     queryFn: async () => {
       if (messages.length < 2) return null;
-      const result = await generateThreadAbstract({ messages: messages.map(m => ({...m, text: m.text || ''})) });
+      // Convert thread references to the format expected by abstract generation
+      const abstractReferences = threadReferences.map(ref => ({
+        text: ref.text,
+        messageId: ref.messageId
+      }));
+      
+      const result = await generateThreadAbstract({ 
+        messages: messages.map(m => ({...m, text: m.text || ''}))
+      });
+      
+      // Override the references with our thread-scoped ones if they exist
+      if (abstractReferences.length > 0) {
+        return {
+          ...result,
+          references: abstractReferences
+        };
+      }
+      
       return result;
     },
     enabled: messages.length >= 2,
@@ -756,6 +834,8 @@ export default function ThreadPage() {
               onActionItemClick={handleSendMessage}
               onReferenceClick={handleReferenceClick}
               onHighlightClick={handleHighlightClick}
+              threadReferences={threadReferences}
+              onThreadReferenceClick={handleThreadReferenceClick}
             />
         </div>
       </aside>

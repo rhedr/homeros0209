@@ -24,4 +24,7 @@ export const GenerateThreadAbstractOutputSchema = z.object({
   })).optional().describe('A list of any references or sources mentioned in the conversation, including the ID of the message they appear in.'),
 });
 export type GenerateThreadAbstractOutput = z.infer<typeof GenerateThreadAbstractOutputSchema>;
-export type Reference = z.infer<typeof GenerateThreadAbstractOutputSchema.shape.references.element>;
+export type Reference = {
+  text: string;
+  messageId: string;
+};

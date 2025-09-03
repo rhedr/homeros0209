@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reference System Testing</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #fff; }
+        .test-case { margin: 20px 0; padding: 15px; border: 1px solid #333; border-radius: 5px; }
+        .pass { background: #1a3a1a; border-color: #4a8a4a; }
+        .fail { background: #3a1a1a; border-color: #8a4a4a; }
+        .warning { background: #3a3a1a; border-color: #8a8a4a; }
+        pre { background: #2a2a2a; padding: 10px; border-radius: 3px; overflow-x: auto; }
+        .summary { background: #2a2a4a; padding: 20px; border-radius: 5px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Reference System Comprehensive Testing</h1>
+    <div id="results"></div>
+
+    <script>
+        // Mock implementations for browser testing
+        function uuidv4() {
+            return 'xxxx-xxxx-4xxx-yxxx'.replace(/[xy]/g, function(c) {
+                var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        // Reference processor implementation (simplified for testing)
+        function processMessageReferences(messageText, messageId, threadReferences) {
+            const extractedReferences = [];
+            let processedText = messageText;
+            let nextReferenceNumber = Math.max(...threadReferences.map(r => r.number), 0) + 1;
+            
+            const referenceMap = new Map();
+            const replacements = new Map();
+            
+            // Handle various footnote patterns
+            const footnotePatterns = [
+                /\[\^(\d+)\]/g,
+                /\[(\d+)\]/g,
+                /\(\^(\d+)\)/g
+            ];
+
+            for (const pattern of footnotePatterns) {
+                let match;
+                while ((match = pattern.exec(messageText)) !== null) {
+                    const originalNumber = parseInt(match[1]);
+                    const footnoteText = match[0];
+                    
+                    if (originalNumber > 999 || originalNumber < 1) continue;
+                    if (replacements.has(footnoteText)) continue;
+                    
+                    let reference = referenceMap.get(originalNumber.toString());
+                    if (!reference) {
+                        reference = {
+                            id: uuidv4(),
+                            text: `Reference ${originalNumber}`,
+                            messageId,
+                            number: nextReferenceNumber++
+                        };
+                        referenceMap.set(originalNumber.toString(), reference);
+                        extractedReferences.push(reference);
+                    }
+                    
+                    replacements.set(footnoteText, `[^${reference.number}]`);
+                }
+            }
+
+            // Apply replacements
+            for (const [original, replacement] of replacements) {
+                processedText = processedText.replaceAll(original, replacement);
+            }
+
+            // Process reference sections
+            const referenceSectionRegex = /(?:References?|Sources?|Bibliography):\s*\n((?:\d+\.\s*.+?\n?)*)/gi;
+            const refMatch = referenceSectionRegex.exec(messageText);
+            
+            if (refMatch) {
+                const referenceLineRegex = /(\d+)\.\s*(.+?)(?=\n|$)/g;
+                let lineMatch;
+                while ((lineMatch = referenceLineRegex.exec(refMatch[1])) !== null) {
+                    const originalNumber = lineMatch[1];
+                    const referenceText = lineMatch[2].trim();
+                    
+                    const reference = referenceMap.get(originalNumber);
+                    if (reference) {
+                        reference.text = referenceText;
+                        
+                        const urlMatch = referenceText.match(/(https?:\/\/[^\s\)]+|www\.[^\s\)]+|doi:[^\s\)]+)/);
+                        if (urlMatch) {
+                            reference.url = urlMatch[1];
+                        }
+                    }
+                }
+
+                const newReferenceSection = extractedReferences
+                    .map(ref => `${ref.number}. ${ref.text}`)
+                    .join('\n');
+                
+                processedText = processedText.replace(refMatch[0], `References:\n${newReferenceSection}`);
+            }
+
+            return {
+                processedText,
+                newReferences: extractedReferences
+            };
+        }
+
+        function updateThreadReferences(currentReferences, newReferences) {
+            const referenceMap = new Map(currentReferences.map(ref => [ref.id, ref]));
+            newReferences.forEach(newRef => referenceMap.set(newRef.id, newRef));
+            return Array.from(referenceMap.values()).sort((a, b) => a.number - b.number);
+        }
+
+        // Test cases
+        const testCases = [
+            {
+                name: "Mixed Reference Formats",
+                text: `Based on recent research [^1] and studies [2], we can see multiple approaches (^3) to this problem.
+
+References:
+1. Smith et al. (2023) - Advanced AI Research
+2. Jones Research Institute - Modern Computing
+3. Brown, J. (2024) "New Methodologies"`,
+                expectedRefs: 3,
+                description: "Should handle [^1], [2], and (^3) formats"
+            },
+            {
+                name: "Duplicate Reference Numbers",
+                text: `This cites reference [^1] and another [^1] that should be the same.
+
+References:
+1. First Reference - https://first.com`,
+                expectedRefs: 1,
+                description: "Should not create duplicates for same reference number"
+            },
+            {
+                name: "Non-sequential Numbers",
+                text: `Here's reference [^5] followed by [^1] and then [^3].
+
+References:
+5. Fifth Reference Originally
+1. First Reference Originally
+3. Third Reference Originally`,
+                expectedRefs: 3,
+                description: "Should renumber to sequential order"
+            },
+            {
+                name: "URL Extraction",
+                text: `Reference with URL [^1].
+
+References:
+1. Study by Smith - https://example.com/study`,
+                expectedRefs: 1,
+                description: "Should extract URLs from reference text"
+            },
+            {
+                name: "Edge Cases - High Numbers",
+                text: `Invalid high number [^999] and year (2019) should be handled correctly.`,
+                expectedRefs: 0,
+                description: "Should ignore numbers > 999 and years"
+            },
+            {
+                name: "Thread Reference Continuity",
+                text: `Second message with reference [^1].
+
+References:
+1. Second message reference`,
+                expectedRefs: 1,
+                description: "Should continue numbering from previous thread references",
+                existingRefs: [
+                    { id: 'ref-1', number: 1, text: 'First ref', messageId: 'msg-1' },
+                    { id: 'ref-2', number: 2, text: 'Second ref', messageId: 'msg-1' }
+                ]
+            }
+        ];
+
+        function runTests() {
+            const results = document.getElementById('results');
+            let totalTests = 0;
+            let passedTests = 0;
+            
+            testCases.forEach((testCase, index) => {
+                totalTests++;
+                const existingRefs = testCase.existingRefs || [];
+                
+                try {
+                    const result = processMessageReferences(
+                        testCase.text,
+                        `test-msg-${index}`,
+                        existingRefs
+                    );
+                    
+                    const updatedRefs = updateThreadReferences(existingRefs, result.newReferences);
+                    
+                    // Check results
+                    const actualRefCount = result.newReferences.length;
+                    const passed = actualRefCount === testCase.expectedRefs;
+                    
+                    if (passed) passedTests++;
+                    
+                    // Check for URL extraction if expected
+                    let urlTest = true;
+                    if (testCase.name === "URL Extraction") {
+                        urlTest = result.newReferences.some(ref => ref.url);
+                    }
+                    
+                    // Check thread continuity
+                    let continuityTest = true;
+                    if (testCase.name === "Thread Reference Continuity") {
+                        const expectedNextNumber = existingRefs.length + 1;
+                        continuityTest = result.newReferences.length > 0 && 
+                                       result.newReferences[0].number === expectedNextNumber;
+                    }
+                    
+                    const finalPassed = passed && urlTest && continuityTest;
+                    
+                    results.innerHTML += `
+                        <div class="test-case ${finalPassed ? 'pass' : 'fail'}">
+                            <h3>${finalPassed ? '✅' : '❌'} ${testCase.name}</h3>
+                            <p><strong>Description:</strong> ${testCase.description}</p>
+                            <p><strong>Expected References:</strong> ${testCase.expectedRefs} | <strong>Found:</strong> ${actualRefCount}</p>
+                            ${testCase.existingRefs ? `<p><strong>Thread References Before:</strong> ${testCase.existingRefs.length}</p>` : ''}
+                            <details>
+                                <summary>View Details</summary>
+                                <h4>Original Text:</h4>
+                                <pre>${testCase.text}</pre>
+                                <h4>Processed Text:</h4>
+                                <pre>${result.processedText}</pre>
+                                <h4>Extracted References:</h4>
+                                <pre>${JSON.stringify(result.newReferences, null, 2)}</pre>
+                                <h4>Final Thread References:</h4>
+                                <pre>${JSON.stringify(updatedRefs, null, 2)}</pre>
+                            </details>
+                        </div>
+                    `;
+                } catch (error) {
+                    results.innerHTML += `
+                        <div class="test-case fail">
+                            <h3>❌ ${testCase.name} (ERROR)</h3>
+                            <p><strong>Error:</strong> ${error.message}</p>
+                            <pre>${error.stack}</pre>
+                        </div>
+                    `;
+                }
+            });
+
+            // Add summary
+            const successRate = (passedTests / totalTests * 100).toFixed(1);
+            results.innerHTML = `
+                <div class="summary">
+                    <h2>🎯 Test Summary</h2>
+                    <p><strong>Total Tests:</strong> ${totalTests}</p>
+                    <p><strong>Passed:</strong> ${passedTests}</p>
+                    <p><strong>Failed:</strong> ${totalTests - passedTests}</p>
+                    <p><strong>Success Rate:</strong> ${successRate}%</p>
+                </div>
+            ` + results.innerHTML;
+        }
+
+        // Run tests when page loads
+        window.onload = runTests;
+    </script>
+</body>
+</html>

@@ -12,7 +12,11 @@ import { calculateNormalizedOffsets } from '@/lib/textNormalization';
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PaintBucket, X } from 'lucide-react';
-import type { Message } from '@/app/app/threads/[id]/page';
+type Message = {
+  role: 'user' | 'ai';
+  text: string;
+  id: string;
+};
 
 
 interface SelectionInfo {
@@ -263,13 +267,62 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         ref={messageRef}
         className="message-content"
         data-message-id={message.id}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
+        onMouseDown={handleMouseDown as any}
+        onMouseUp={handleMouseUp as any}
         style={{ userSelect: 'text' }}
       >
         <ReactMarkdown 
           remarkPlugins={[remarkGfm]}
           className="prose prose-sm max-w-none dark:prose-invert"
+          components={{
+            sup: ({ children, ...props }) => (
+              <sup 
+                {...props} 
+                className="text-primary cursor-pointer hover:underline"
+                onClick={(e) => {
+                  e.preventDefault();
+                  const footnoteId = `user-content-fn-${children}`;
+                  const footnote = document.getElementById(footnoteId);
+                  if (footnote) {
+                    footnote.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }
+                }}
+              >
+                {children}
+              </sup>
+            ),
+            // Customize footnote reference rendering
+            a: ({ href, children, ...props }) => {
+              // Check if this is a footnote reference link
+              if (href && href.startsWith('#user-content-fn-')) {
+                return (
+                  <sup className="text-primary cursor-pointer hover:underline">
+                    <a {...props} href={href}>{children}</a>
+                  </sup>
+                );
+              }
+              // Check if this is a footnote return link (the arrows!)
+              if (href && href.startsWith('#user-content-fnref-')) {
+                // Reduce the number of return links by only showing one per footnote
+                const isFirstReturn = !props.className?.includes('footnote-back-multiple');
+                if (!isFirstReturn) {
+                  return null; // Hide duplicate return links
+                }
+                return (
+                  <a 
+                    {...props} 
+                    href={href}
+                    className="text-xs text-muted-foreground hover:text-primary ml-2"
+                    title="Return to reference"
+                  >
+                    ↩
+                  </a>
+                );
+              }
+              // Regular links
+              return <a {...props} href={href}>{children}</a>;
+            }
+          }}
         >
           {message.text}
         </ReactMarkdown>

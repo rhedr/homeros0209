@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reference Fix Verification</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #fff; }
+        .test-case { margin: 20px 0; padding: 15px; border: 1px solid #333; border-radius: 5px; }
+        .before { background: #3a1a1a; border-color: #8a4a4a; }
+        .after { background: #1a3a1a; border-color: #4a8a4a; }
+        pre { background: #2a2a2a; padding: 10px; border-radius: 3px; overflow-x: auto; }
+        h3 { margin: 0 0 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Reference System Fix Verification</h1>
+    
+    <div class="test-case before">
+        <h3>❌ BEFORE (Broken)</h3>
+        <p><strong>AI Response:</strong></p>
+        <pre>Based on recent research [^1] and studies [^2].
+
+References:
+1. Smith et al. (2023) - Advanced AI Research
+2. Jones Research Institute - Modern Computing</pre>
+        
+        <p><strong>After Processing (BROKEN):</strong></p>
+        <pre>Based on recent research [^3] and studies [^4].  ← Citations renumbered
+
+References:
+1. Smith et al. (2023) - Advanced AI Research     ← But references still show original numbers!
+2. Jones Research Institute - Modern Computing</pre>
+        
+        <p><strong>Issues:</strong></p>
+        <ul>
+            <li>❌ Citations [^3][^4] don't match References 1,2</li>
+            <li>❌ Multiple return arrows (↩↩↩) from remark-gfm conflicts</li>
+        </ul>
+    </div>
+
+    <div class="test-case after">
+        <h3>✅ AFTER (Fixed)</h3>
+        <p><strong>AI Response:</strong></p>
+        <pre>Based on recent research [^1] and studies [^2].
+
+References:
+1. Smith et al. (2023) - Advanced AI Research
+2. Jones Research Institute - Modern Computing</pre>
+        
+        <p><strong>After Processing (FIXED):</strong></p>
+        <pre>Based on recent research [^3] and studies [^4].
+
+[^3]: Smith et al. (2023) - Advanced AI Research   ← remark-gfm format
+[^4]: Jones Research Institute - Modern Computing</pre>
+        
+        <p><strong>Fixes Applied:</strong></p>
+        <ul>
+            <li>✅ Citations [^3][^4] match footnote definitions [^3]: [^4]:</li>
+            <li>✅ Consistent numbering throughout the thread</li>
+            <li>✅ Single return arrow (↩) per footnote, properly styled</li>
+            <li>✅ Compatible with remark-gfm processing</li>
+        </ul>
+    </div>
+
+    <div class="test-case after">
+        <h3>🧪 Verification Steps</h3>
+        <ol>
+            <li><strong>Start a new conversation</strong> in Homeros</li>
+            <li><strong>Ask for a response with references</strong>: "Tell me about AI development with sources"</li>
+            <li><strong>Check the response</strong>:
+                <ul>
+                    <li>Inline citations like [^1], [^2] should match</li>
+                    <li>Reference section should use [^1]: format, not 1. format</li>
+                    <li>Numbers should be consistent</li>
+                </ul>
+            </li>
+            <li><strong>Continue the conversation</strong> and verify references continue numbering from previous message</li>
+            <li><strong>Check return links</strong>: Should only see one (↩) per reference, not multiple</li>
+        </ol>
+    </div>
+
+    <div class="test-case after">
+        <h3>🔍 Debug Information</h3>
+        <p>Open browser developer tools (F12) and check the Console for logs like:</p>
+        <pre>Processing message with X existing thread references
+Found Y unique reference numbers: [1, 2]
+Mapping: original [1] → new [3]
+Mapping: original [2] → new [4] 
+Replaced: [^1] → [^3]
+Replaced: [^2] → [^4]
+Rebuilding reference section with 2 references
+  3. Smith et al. (2023) - Advanced AI Research
+  4. Jones Research Institute - Modern Computing</pre>
+    </div>
+
+</body>
+</html>
