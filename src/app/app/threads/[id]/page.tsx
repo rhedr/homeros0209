@@ -38,6 +38,107 @@ import { processMessageReferences, updateThreadReferences } from '@/lib/referenc
 import { validateThreadReferences, repairThreadReferences } from '@/lib/referenceValidation';
 import { migrateAllThreadsInStorage, needsMigration, migrateThreadReferences } from '@/lib/referenceMigration';
 import type { ThreadReference as LibThreadReference } from '@/lib/referenceProcessor';
+
+/**
+ * Extract references directly from the most recent AI message text
+ */
+function extractReferencesFromLastMessage(messages: Message[]): ThreadReference[] {
+    console.log('🚀 extractReferencesFromLastMessage called with', messages.length, 'messages');
+    try {
+        // Safety check for messages array
+        if (!messages || !Array.isArray(messages) || messages.length === 0) {
+            console.log('⚠️ No messages or empty array, returning empty references');
+            return [];
+        }
+        
+        // Find the most recent AI message
+        const lastAiMessage = [...messages].reverse().find(m => m && m.role === 'ai' && m.text);
+        if (!lastAiMessage || !lastAiMessage.text) {
+            return [];
+        }
+        
+        const text = lastAiMessage.text;
+        const references: ThreadReference[] = [];
+        
+        console.log('🔍 Full message text preview:', text.substring(0, 200) + '...');
+        console.log('🔍 Looking for References section...');
+        
+        // Try multiple patterns to find references
+        const patterns = [
+            /(?:References?|Sources?):\s*[\n\r]+((?:[\s\S]*?)(?=\n\n|$))/i,
+            /(?:References?|Sources?):\s*\n((?:\d+\.[\s\S]*?)(?=\n\n|$))/i,
+            /(?:References?|Sources?):\s*((?:\n\d+\.[\s\S]*?)(?=\n\n|$))/i,
+            /(?:References?|Sources?):\s*\n((?:.*\n)*)/i
+        ];
+        
+        let referenceSectionMatch = null;
+        let matchedPattern = -1;
+        
+        for (let i = 0; i < patterns.length; i++) {
+            referenceSectionMatch = text.match(patterns[i]);
+            if (referenceSectionMatch) {
+                matchedPattern = i;
+                console.log(`✅ Found references using pattern ${i}:`, referenceSectionMatch[0].substring(0, 100) + '...');
+                break;
+            }
+        }
+        
+        if (!referenceSectionMatch || !referenceSectionMatch[1]) {
+            console.log('📭 No references section found with any pattern');
+            console.log('🔍 Text contains "References"?', text.includes('References'));
+            console.log('🔍 Text contains "references"?', text.includes('references'));
+            return [];
+        }
+        
+        const referenceSection = referenceSectionMatch[1].trim();
+        console.log('📖 Found references section:', referenceSection.substring(0, 100) + '...');
+        
+        // Parse individual references with safer regex
+        const lines = referenceSection.split(/[\n\r]+/);
+        console.log('🔍 Split into lines:', lines.length, 'lines');
+        lines.forEach((line, index) => {
+            console.log(`🔍 Line ${index}: "${line}"`);
+        });
+        
+        lines.forEach((line, index) => {
+            const trimmedLine = line.trim();
+            if (trimmedLine.length === 0) return;
+            
+            console.log(`🔍 Processing line: "${trimmedLine}"`);
+            // Match lines starting with numbers like "1. Author text..."
+            const match = trimmedLine.match(/^(\d+)\.\s*(.+)$/);
+            console.log(`🔍 Regex match result:`, match);
+            
+            if (match && match[2]) {
+                const number = parseInt(match[1], 10);
+                const refText = match[2].trim();
+                
+                console.log(`🔍 Parsed: number=${number}, refText="${refText}", length=${refText.length}`);
+                
+                if (refText && refText.length > 10 && !isNaN(number)) {
+                    references.push({
+                        id: `ref-${lastAiMessage.id}-${number}`,
+                        text: refText,
+                        messageId: lastAiMessage.id,
+                        number: number
+                    });
+                    console.log(`✅ Extracted reference ${number}: ${refText.substring(0, 50)}...`);
+                } else {
+                    console.log(`⚠️ Skipped reference: refText too short or invalid number`);
+                }
+            } else {
+                console.log(`⚠️ Line doesn't match reference pattern: "${trimmedLine}"`);
+            }
+        });
+        
+        console.log(`📚 Extracted ${references.length} references from current message`);
+        return references;
+        
+    } catch (error) {
+        console.error('Error extracting references from message:', error);
+        return [];
+    }
+}
 import { v4 as uuidv4 } from 'uuid';
 
 type Message = {
@@ -111,6 +212,7 @@ export default function ThreadPage() {
   const [title, setTitle] = useState("Conversation");
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [threadReferences, setThreadReferences] = useState<ThreadReference[]>([]);
+  const [currentMessageReferences, setCurrentMessageReferences] = useState<ThreadReference[]>([]);
   const [isInsightsPanelCollapsed, setIsInsightsPanelCollapsed] = useState(false);
   
   const [threadSearchQuery, setThreadSearchQuery] = useState('');
@@ -164,16 +266,34 @@ export default function ThreadPage() {
         const aiMessageId = `ai-${Date.now()}`;
         
         // Process references in the AI response
+        console.log('🔍 Processing AI response for references...', { 
+          messageLength: response.message.length,
+          existingRefsCount: threadReferences.length 
+        });
+        
         const { processedText, newReferences } = processMessageReferences(
           response.message,
           aiMessageId,
           threadReferences
         );
         
+        console.log('✅ Reference processing complete:', {
+          originalLength: response.message.length,
+          processedLength: processedText.length,
+          newReferencesFound: newReferences.length,
+          newReferencesTexts: newReferences.map(r => ({ number: r.number, text: r.text }))
+        });
+        
         const aiMessage: Message = { role: 'ai', text: processedText, id: aiMessageId, timestamp: new Date().toISOString()};
         
         // Update thread references
         const updatedThreadReferences = updateThreadReferences(threadReferences, newReferences);
+        
+        console.log('📚 Thread references updated:', {
+          before: threadReferences.length,
+          after: updatedThreadReferences.length,
+          allRefs: updatedThreadReferences.map(r => ({ number: r.number, text: r.text.substring(0, 50) + (r.text.length > 50 ? '...' : '') }))
+        });
         setThreadReferences(updatedThreadReferences);
         
         setMessages(currentMessages => {
@@ -277,6 +397,13 @@ export default function ThreadPage() {
             }
             
             // Loading an existing thread
+            console.log('📂 Loading existing thread:', {
+              threadId,
+              hasThreadReferences: !!storedData.threadReferences,
+              threadReferencesCount: storedData.threadReferences?.length || 0,
+              threadReferencesData: storedData.threadReferences?.map(r => ({ number: r.number, text: r.text })) || []
+            });
+            
             setThreadData(storedData);
             setTitle(storedData.title);
             setMessages(storedData.messages || []);
@@ -517,6 +644,17 @@ export default function ThreadPage() {
     setCurrentMatchIndex(0);
   }, [threadSearchQuery, messages]);
 
+  // Extract references ONLY from the latest AI message to display in Insights Panel
+  useEffect(() => {
+    try {
+      const currentRefs = extractReferencesFromLastMessage(messages);
+      setCurrentMessageReferences(currentRefs);
+    } catch (error) {
+      console.error('Error in reference extraction useEffect:', error);
+      setCurrentMessageReferences([]);
+    }
+  }, [messages]);
+
   const threadTitle = title;
 
   const handleSearchNav = (direction: 'next' | 'prev') => {
@@ -546,22 +684,60 @@ export default function ThreadPage() {
     queryKey: ['threadAbstract', threadId, messages.map(m => m.id).join('-'), threadReferences.length],
     queryFn: async () => {
       if (messages.length < 2) return null;
-      // Convert thread references to the format expected by abstract generation
-      const abstractReferences = threadReferences.map(ref => ({
-        text: ref.text,
-        messageId: ref.messageId
-      }));
       
       const result = await generateThreadAbstract({ 
         messages: messages.map(m => ({...m, text: m.text || ''}))
       });
       
-      // Override the references with our thread-scoped ones if they exist
-      if (abstractReferences.length > 0) {
-        return {
-          ...result,
-          references: abstractReferences
-        };
+      // If we have thread references but they have placeholder text, update them with abstract data
+      if (threadReferences.length > 0 && result?.references && result.references.length > 0) {
+        console.log('🔍 Raw abstract references:', result.references);
+        
+        // References are now filtered at the source in referenceProcessor
+        const validAbstractRefs = result.references.map(r => {
+          // sanitize: remove footnote markers like [^1], trim
+          const cleaned = (r.text || '').replace(/\[^\d+\]/g, '').replace(/\[\^\d+\]/g, '').trim();
+          return { ...r, text: cleaned };
+        }).filter(r => {
+          const txt = r.text || '';
+          // Require some Latin letters and a minimum length to avoid garbage
+          return /[a-zA-Z]/.test(txt) && txt.length >= 8;
+        });
+        
+        console.log('✅ Valid abstract references:', validAbstractRefs);
+        
+        const updatedThreadRefs = threadReferences.map((threadRef, index) => {
+          const abstractRef = validAbstractRefs[index];
+          if (abstractRef && (threadRef.text.includes('Reference ') || threadRef.text.includes('(source not provided)'))) {
+            return {
+              ...threadRef,
+              text: abstractRef.text
+            };
+          }
+          return threadRef;
+        });
+        
+        // Update the thread references state if we found better text
+        if (updatedThreadRefs.some((ref, idx) => ref.text !== threadReferences[idx]?.text)) {
+          console.log('🔄 Updating thread references with abstract data:', updatedThreadRefs.map(r => ({ number: r.number, text: r.text })));
+          setThreadReferences(updatedThreadRefs);
+          
+          // Also update localStorage
+          const currentThreadStr = localStorage.getItem(`thread-${threadId}`);
+          if (currentThreadStr) {
+            try {
+              const currentThread = JSON.parse(currentThreadStr);
+              const newThreadData = { 
+                ...currentThread, 
+                threadReferences: updatedThreadRefs,
+                updatedAt: new Date().toISOString() 
+              };
+              localStorage.setItem(`thread-${threadId}`, JSON.stringify(newThreadData));
+            } catch (e) {
+              console.error('Failed to update thread references in localStorage', e);
+            }
+          }
+        }
       }
       
       return result;

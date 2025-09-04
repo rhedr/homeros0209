@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { ScrollArea } from "../ui/scroll-area";
 import { Quote, Loader2, Dot, ClipboardCheck, PanelRight, Trash2, PanelLeft } from 'lucide-react';
 import type { GenerateThreadAbstractOutput, Reference } from "@/ai/flows/types/thread-abstract-types";
@@ -62,6 +63,37 @@ export function InsightsPanel({
   const [isEditingDescription, setIsEditingDescription] = useState(false);
   const [currentDescription, setCurrentDescription] = useState('');
 
+  // Create a compact semantic label from a user prompt via keyword extraction
+  const summarizePrompt = useMemo(() => {
+    const STOP_WORDS = new Set([
+      'the','and','or','a','an','to','of','in','on','for','with','about','from','as','by','is','are','was','were','be','being','been','at','that','this','these','those','it','its','into','over','under','than','then','so','but','if','while','how','what','why','when','which','who','whom','do','does','did','can','could','should','would','will','may','might','i','we','you','they','he','she','them','his','her','our','your','their'
+    ]);
+    const MAX_LABEL_LEN = 80;
+    const MAX_KEYWORDS = 5;
+
+    function titleCase(s: string) {
+      return s.replace(/\b\w+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+    }
+
+    return (text: string): string => {
+      if (!text) return 'Conversation';
+      const base = text.replace(/[`*_#>\[\]\(\)\n]+/g, ' ').toLowerCase();
+      const words = base.match(/[a-z0-9][a-z0-9\-]+/g) || [];
+      const freq = new Map<string, number>();
+      for (const w of words) {
+        if (STOP_WORDS.has(w)) continue;
+        if (w.length <= 2) continue;
+        freq.set(w, (freq.get(w) || 0) + 1);
+      }
+      const keywords = Array.from(freq.entries())
+        .sort((a,b) => b[1]-a[1])
+        .slice(0, MAX_KEYWORDS)
+        .map(([w]) => w.replace(/-/g, ' '));
+      const label = keywords.length > 0 ? titleCase(keywords.join(' · ')) : text.trim();
+      return label.length > MAX_LABEL_LEN ? label.slice(0, MAX_LABEL_LEN) + '…' : label;
+    };
+  }, []);
+
   const highlightColors = useMemo(() => {
     const colors = highlights.map(h => h.color).filter((c): c is string => !!c);
     return [...new Set(colors)];
@@ -120,7 +152,7 @@ export function InsightsPanel({
 
   return (
     <Card className="h-full flex flex-col shadow-sm">
-        <Tabs defaultValue="references" className="flex flex-col flex-grow" onValueChange={setActiveTab}>
+        <Tabs defaultValue="references" className="flex flex-col flex-grow min-h-0" onValueChange={setActiveTab}>
             <div className="flex items-center justify-between p-2 border-b">
                 <div className="flex-1 pl-2">
                     <TabsList className="grid w-full grid-cols-3">
@@ -135,53 +167,97 @@ export function InsightsPanel({
             </div>
             <div className="flex-grow min-h-0">
                 <TabsContent value="references" className="h-full">
-                     <ScrollArea className="h-full p-4">
+                     <div className="h-full flex flex-col overflow-hidden">
+                       <ScrollArea className="flex-1 min-h-0 p-4 overflow-auto">
                         <div className="pb-4">
-                            {threadReferences && threadReferences.length > 0 ? (
-                                <ol className="space-y-3 text-sm">
-                                {threadReferences.map((ref) => (
-                                    <li
-                                    key={ref.id}
-                                    className="cursor-pointer hover:bg-accent/50 p-2 rounded-md transition-colors border-l-2 border-primary/20"
-                                    onClick={() => onThreadReferenceClick?.(ref)}
-                                    role="button"
-                                    tabIndex={0}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onThreadReferenceClick?.(ref) }}
-                                    >
-                                    <div className="flex items-start gap-2">
-                                        <span className="font-medium text-primary text-xs bg-primary/10 px-1.5 py-0.5 rounded shrink-0">
-                                            {ref.number}
-                                        </span>
-                                        <div className="flex-1 min-w-0">
-                                            <span className="break-words text-foreground">{ref.text}</span>
-                                            {ref.url && (
-                                                <div className="mt-1">
-                                                    <a 
-                                                        href={ref.url} 
-                                                        target="_blank" 
+                            {(() => {
+                              if (!threadReferences || threadReferences.length === 0) {
+                                return (
+                                  <div className="h-full flex items-center justify-center">
+                                    <p className="text-sm text-muted-foreground text-center">
+                                      No references found in this thread yet.<br />
+                                      <span className="text-xs">References will appear as you chat with Homeros.</span>
+                                    </p>
+                                  </div>
+                                );
+                              }
+
+                              // Group references by the preceding user prompt of the AI message they belong to
+                              const messageById = new Map(messages.map(m => [m.id, m]));
+                              const existingMessageIds = new Set(messages.map(m => m.id));
+                              const aiMessageIds = Array.from(new Set(
+                                threadReferences
+                                  .filter(r => existingMessageIds.has(r.messageId))
+                                  .map(r => r.messageId)
+                              ));
+                              const groups = aiMessageIds.map(aiId => {
+                                const aiIndex = messages.findIndex(m => m.id === aiId);
+                                let title = 'Response';
+                                if (aiIndex > 0) {
+                                  // find nearest preceding user message
+                                  for (let i = aiIndex - 1; i >= 0; i--) {
+                                    if (messages[i].role === 'user') { 
+                                      title = summarizePrompt(messages[i].text.trim());
+                                      break; 
+                                    }
+                                  }
+                                }
+                                const shortTitle = title;
+                                const refs = threadReferences.filter(r => r.messageId === aiId).sort((a,b) => a.number - b.number);
+                                return { aiId, title: shortTitle, refs };
+                              }).filter(g => g.refs.length > 0);
+
+                              return (
+                                <Accordion type="multiple" className="space-y-3">
+                                  {groups.map(group => (
+                                    <AccordionItem key={group.aiId} value={group.aiId} className="border rounded-md">
+                                      <AccordionTrigger className="px-3 py-2 text-sm font-semibold text-foreground hover:no-underline">
+                                        <span className="truncate" title={group.title}>{group.title}</span>
+                                      </AccordionTrigger>
+                                      <AccordionContent>
+                                        <ol className="space-y-3 text-sm px-3 pb-3 pr-2 max-w-full">
+                                          {group.refs.map((ref, idx) => (
+                                            <li
+                                              key={ref.id}
+                                              className="cursor-pointer hover:bg-accent/50 p-2 rounded-md transition-colors border-l-2 border-primary/20 max-w-full overflow-hidden"
+                                              onClick={() => onThreadReferenceClick?.(ref)}
+                                              role="button"
+                                              tabIndex={0}
+                                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onThreadReferenceClick?.(ref) }}
+                                            >
+                                              <div className="flex items-start gap-2">
+                                                <span className="font-medium text-primary text-xs bg-primary/10 px-1.5 py-0.5 rounded shrink-0">
+                                                  {idx + 1}
+                                                </span>
+                                                <div className="flex-1 min-w-0 break-words">
+                                                  <span className="break-words whitespace-normal text-foreground">{ref.text}</span>
+                                                  {ref.url && (
+                                                    <div className="mt-1">
+                                                      <a
+                                                        href={ref.url}
+                                                        target="_blank"
                                                         rel="noopener noreferrer"
                                                         className="text-xs text-blue-600 hover:underline break-all"
                                                         onClick={(e) => e.stopPropagation()}
-                                                    >
+                                                      >
                                                         {ref.url}
-                                                    </a>
+                                                      </a>
+                                                    </div>
+                                                  )}
                                                 </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    </li>
-                                ))}
-                                </ol>
-                            ) : (
-                                <div className="h-full flex items-center justify-center">
-                                <p className="text-sm text-muted-foreground text-center">
-                                    No references found in this thread yet.<br />
-                                    <span className="text-xs">References will appear as you chat with Homeros.</span>
-                                </p>
-                                </div>
-                            )}
+                                              </div>
+                                            </li>
+                                          ))}
+                                        </ol>
+                                      </AccordionContent>
+                                    </AccordionItem>
+                                  ))}
+                                </Accordion>
+                              );
+                            })()}
                         </div>
-                    </ScrollArea>
+                       </ScrollArea>
+                     </div>
                 </TabsContent>
                 <TabsContent value="summary" className="h-full">
                     <ScrollArea className="h-full p-4">

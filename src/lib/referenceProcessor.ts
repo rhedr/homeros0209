@@ -22,6 +22,70 @@ const FOOTNOTE_PATTERNS = [
     /Sources?:\s*\n((?:\d+\.\s*.+?\n)*)/gi,
 ];
 
+/**
+ * Validates whether a reference text is legitimate or should be filtered out
+ * @param text The reference text to validate
+ * @returns true if the reference is valid, false if it should be filtered
+ */
+function isValidReferenceText(text: string): boolean {
+    if (!text || typeof text !== 'string') {
+        return false;
+    }
+
+    const cleanText = text.trim();
+    
+    // Filter out years (any 4-digit number from 1800-2099)
+    if (/^(1[89]|20)\d{2}$/.test(cleanText)) {
+        console.log('❌ Filtering out year reference:', cleanText);
+        return false;
+    }
+    
+    // Filter out very short text (< 5 chars only - much more permissive)
+    if (cleanText.length < 5) {
+        console.log('❌ Filtering out very short reference:', cleanText);
+        return false;
+    }
+    
+    // Filter out just numbers
+    if (/^\d+$/.test(cleanText)) {
+        console.log('❌ Filtering out numeric reference:', cleanText);
+        return false;
+    }
+    
+    // Filter out common incomplete citation fragments
+    if (/^(eds?\.?|et al\.?|vol\.?|pp?\.?|no\.?|ibid\.?|fig\.?|table\.?)$/i.test(cleanText)) {
+        console.log('❌ Filtering out incomplete fragment:', cleanText);
+        return false;
+    }
+    
+    // Filter out text that's mostly punctuation or numbers
+    if (/^[\d\s\.,;:\-()]+$/.test(cleanText)) {
+        console.log('❌ Filtering out punctuation-heavy reference:', cleanText);
+        return false;
+    }
+    
+    // Filter out single words under 8 characters (much more permissive, allow URLs/DOIs)
+    if (!/\s/.test(cleanText) && cleanText.length < 8 && !/\w+\.\w+|https?:|doi:|www\./i.test(cleanText)) {
+        console.log('❌ Filtering out single word reference:', cleanText);
+        return false;
+    }
+    
+    // Require at least one alphabetic character
+    if (!/[a-zA-Z]/.test(cleanText)) {
+        console.log('❌ Filtering out non-alphabetic reference:', cleanText);
+        return false;
+    }
+    
+    // Must have proper structure (spaces or substantial length) - much more permissive 
+    if (!cleanText.includes(' ') && cleanText.length < 10 && !/https?:|doi:|www\.|\.com|\.org|\.edu/i.test(cleanText)) {
+        console.log('❌ Filtering out structurally poor reference:', cleanText);
+        return false;
+    }
+
+    console.log('✅ Valid reference text:', cleanText.substring(0, 50) + (cleanText.length > 50 ? '...' : ''));
+    return true;
+}
+
 export function extractReferencesFromText(
     text: string, 
     messageId: string, 
@@ -43,8 +107,6 @@ export function extractReferencesFromText(
             extractedReferences: []
         };
     }
-
-    console.log(`Processing message with ${existingReferences.length} existing thread references`);
 
     // More robust footnote regex that handles various formats
     const footnotePatterns = [
@@ -73,13 +135,11 @@ export function extractReferencesFromText(
         }
     }
 
-    console.log(`Found ${originalNumbers.size} unique reference numbers: [${Array.from(originalNumbers).join(', ')}]`);
-
     // Create reference objects for each unique original number
     for (const originalNumber of originalNumbers) {
         const newReference: ThreadReference = {
             id: uuidv4(),
-            text: `Reference ${originalNumber}`, // Temporary text, will be updated from reference section
+            text: `Reference ${originalNumber} (source not provided)`, // Better placeholder text
             messageId,
             number: nextReferenceNumber
         };
@@ -88,7 +148,6 @@ export function extractReferencesFromText(
         numberMappings.set(originalNumber, nextReferenceNumber);
         extractedReferences.push(newReference);
         
-        console.log(`Mapping: original [${originalNumber}] → new [${nextReferenceNumber}]`);
         nextReferenceNumber++;
     }
 
@@ -120,98 +179,115 @@ export function extractReferencesFromText(
         }
     }
     
-    // Apply all replacements in a single pass
+    // Apply all replacements in a single pass (no anchor injection)
     for (const [original, replacement] of replacements) {
         processedText = processedText.replaceAll(original, replacement);
-        console.log(`Replaced: ${original} → ${replacement}`);
     }
 
+    console.log('🔍 Looking for reference sections in text...');
+    
     // Enhanced reference section processing with better error handling
     const referenceSectionPatterns = [
-        /(?:References?|Sources?|Bibliography):\s*\n((?:\d+\.\s*.+?\n?)*)/gi,
+        // Standard "References:" format
+        /(?:References?|Sources?|Bibliography):\s*\n((?:\d+\.\s*.+?(?:\n|$))*)/gi,
+        // Without newline after colon
         /(?:References?|Sources?|Bibliography):\s*((?:\d+\.\s*.+?(?:\n|$))*)/gi,
-        /## References?\s*\n((?:\d+\.\s*.+?\n?)*)/gi,
-        /\*\*References?\*\*\s*\n((?:\d+\.\s*.+?\n?)*)/gi
+        // Markdown heading format
+        /#{1,3}\s*(?:References?|Sources?|Bibliography)\s*\n((?:\d+\.\s*.+?(?:\n|$))*)/gi,
+        // Bold format
+        /\*\*(?:References?|Sources?|Bibliography)\*\*\s*\n((?:\d+\.\s*.+?(?:\n|$))*)/gi,
+        // Alternative numbered format
+        /(?:References?|Sources?|Bibliography)\s*:?\s*\n((?:\[\d+\].*?(?:\n|$))*)/gi,
+        // List format without header
+        /\n((?:\d+\.\s+[A-Z].{20,}(?:\n|$))+)/gi
     ];
-
+    
     for (const pattern of referenceSectionPatterns) {
         const refSectionMatch = pattern.exec(text);
         
         if (refSectionMatch) {
+            console.log('✅ Found reference section:', refSectionMatch[0].substring(0, 100));
             try {
                 const referenceSection = refSectionMatch[1];
                 if (!referenceSection || referenceSection.trim().length === 0) {
+                    console.log('⚠️ Reference section is empty, skipping');
                     continue;
                 }
+                console.log('📖 Processing reference section:', referenceSection.substring(0, 200));
                 
-                const referenceLineRegex = /(\d+)\.\s*(.+?)(?=\n|$)/g;
+                // More flexible reference line parsing
+                const referenceLinePatterns = [
+                    /(\d+)\.\s*(.+?)(?=\n|$)/g,           // "1. Reference text"
+                    /\[(\d+)\]\s*(.+?)(?=\n|$)/g,        // "[1] Reference text"  
+                    /(\d+):\s*(.+?)(?=\n|$)/g,           // "1: Reference text"
+                    /(\d+)\)\s*(.+?)(?=\n|$)/g           // "1) Reference text"
+                ];
+
+                let foundReferences = false;
                 
-                let refMatch;
-                while ((refMatch = referenceLineRegex.exec(referenceSection)) !== null) {
-                    const originalNumber = refMatch[1];
-                    const referenceText = refMatch[2].trim();
-                    
-                    // Skip empty or invalid reference text
-                    if (!referenceText || referenceText.length === 0) {
-                        continue;
-                    }
-                    
-                    // Use the correct mapping - originalToNewReferenceMap instead of referenceMap
-                    const reference = originalToNewReferenceMap.get(originalNumber);
-                    if (reference) {
-                        reference.text = referenceText;
-                        console.log(`Updated reference [${reference.number}] text: ${referenceText}`);
+                for (const referenceLineRegex of referenceLinePatterns) {
+                    let refMatch;
+                    while ((refMatch = referenceLineRegex.exec(referenceSection)) !== null) {
+                        const originalNumber = refMatch[1];
+                        const referenceText = refMatch[2].trim();
                         
-                        // Extract URL with better pattern matching
-                        const urlPatterns = [
-                            /(https?:\/\/[^\s\)\]\}]+)/,
-                            /(www\.[^\s\)\]\}]+)/,
-                            /doi:\s*([^\s\)\]\}]+)/i
-                        ];
+                        console.log(`🎯 Found reference ${originalNumber}: "${referenceText}"`);
                         
-                        for (const urlPattern of urlPatterns) {
-                            const urlMatch = referenceText.match(urlPattern);
-                            if (urlMatch) {
-                                let url = urlMatch[1];
-                                if (!url.startsWith('http') && !url.startsWith('doi:')) {
-                                    url = 'https://' + url;
-                                }
-                                reference.url = url;
-                                console.log(`Extracted URL for reference [${reference.number}]: ${url}`);
-                                break;
-                            }
+                        // Skip empty or invalid reference text
+                        if (!referenceText || referenceText.length === 0) {
+                            console.log('⚠️ Empty reference text, skipping');
+                            continue;
                         }
-                    } else {
-                        console.warn(`No reference object found for original number ${originalNumber}`);
+                        
+                        // Validate reference text before assigning - CRITICAL FILTERING POINT
+                        if (!isValidReferenceText(referenceText)) {
+                            console.log('🚫 Skipping invalid reference text:', referenceText);
+                            continue;
+                        }
+                        
+                        // Use the correct mapping - originalToNewReferenceMap instead of referenceMap
+                        const reference = originalToNewReferenceMap.get(originalNumber);
+                        if (reference) {
+                            console.log(`✅ Assigning reference ${originalNumber} -> ${reference.number}: "${referenceText}"`);
+                            reference.text = referenceText;
+                            foundReferences = true;
+                            
+                            // Extract URL with better pattern matching
+                            const urlPatterns = [
+                                /(https?:\/\/[^\s\)\]\}]+)/,
+                                /(www\.[^\s\)\]\}]+)/,
+                                /doi:\s*([^\s\)\]\}]+)/i
+                            ];
+                            
+                            for (const urlPattern of urlPatterns) {
+                                const urlMatch = referenceText.match(urlPattern);
+                                if (urlMatch) {
+                                    let url = urlMatch[1];
+                                    if (!url.startsWith('http') && !url.startsWith('doi:')) {
+                                        url = 'https://' + url;
+                                    }
+                                    reference.url = url;
+                                    break;
+                                }
+                            }
+                        } else {
+                            console.warn(`No reference object found for original number ${originalNumber}`);
+                        }
                     }
+                    
+                    // If we found references with this pattern, don't try others
+                    if (foundReferences) break;
                 }
 
-                // Rebuild reference section with new numbers - CRUCIAL FIX
+                // Rebuild reference section as readable bullet list (no numbers)
                 if (extractedReferences.length > 0) {
-                    // Sort by the NEW number to ensure proper order
                     const sortedReferences = extractedReferences.sort((a, b) => a.number - b.number);
-                    
-                    // Create TWO formats:
-                    // 1. Readable format for display
                     const readableSection = sortedReferences
-                        .map(ref => `${ref.number}. ${ref.text}`)
+                        .map(ref => `- ${ref.text}`)
                         .join('\n');
-                    
-                    // 2. remark-gfm compatible footnote definitions 
-                    const footnoteDefinitions = sortedReferences
-                        .map(ref => `[^${ref.number}]: ${ref.text}`)
-                        .join('\n');
-                    
-                    console.log(`Rebuilding reference section with ${sortedReferences.length} references`);
-                    sortedReferences.forEach(ref => {
-                        console.log(`  ${ref.number}. ${ref.text}`);
-                    });
-                    
-                    // Use ONLY the remark-gfm compatible format to avoid conflicts
-                    processedText = processedText.replace(
-                        refSectionMatch[0], 
-                        footnoteDefinitions
-                    );
+                    // Ensure proper Markdown list rendering: blank line before list
+                    const rebuilt = `References:\n\n${readableSection}\n`;
+                    processedText = processedText.replace(refSectionMatch[0], rebuilt);
                 }
                 
                 break; // Only process the first matching pattern
@@ -222,9 +298,92 @@ export function extractReferencesFromText(
         }
     }
 
+    // Fallback: if a References section still contains numbered items, convert to bullets
+    try {
+        const fallbackRegex = /((?:References?|Sources?|Bibliography):\s*\n)([\s\S]+?)(?=\n{2,}|$)/i;
+        const fallback = processedText.match(fallbackRegex);
+        if (fallback && fallback[2]) {
+            const originalBlock = fallback[0];
+            const header = fallback[1];
+            const listBody = fallback[2]
+                .split(/\n/)
+                .map(line => {
+                    if (/^\s*\d+\.\s+/.test(line)) {
+                        return line.replace(/^\s*\d+\.\s+/, '- ');
+                    }
+                    return line;
+                })
+                .join('\n');
+            const rebuilt = `${header}\n${listBody}\n`;
+            processedText = processedText.replace(originalBlock, rebuilt);
+        }
+    } catch (e) {
+        console.warn('Bullet list fallback failed:', e);
+    }
+
+    // If no reference section was found, check if we can extract any inline reference info
+    if (extractedReferences.some(ref => ref.text.includes('(source not provided)'))) {
+        
+        // Try to extract any parenthetical citations or author names near the footnotes
+        extractedReferences.forEach(ref => {
+            const originalNum = Array.from(originalToNewReferenceMap.entries())
+                .find(([_, refObj]) => refObj.id === ref.id)?.[0];
+            
+            if (originalNum && ref.text.includes('(source not provided)')) {
+                // Look for patterns like "Smith et al. [^1]" or "[^1] (Johnson, 2023)"
+                const patterns = [
+                    new RegExp(`([A-Z][a-zA-Z]+ et al\\.?).*?\\[\\^?${originalNum}\\]`, 'g'),
+                    new RegExp(`\\[\\^?${originalNum}\\].*?\\(([^)]+)\\)`, 'g'),
+                    new RegExp(`([A-Z][a-zA-Z]+,? \\d{4}).*?\\[\\^?${originalNum}\\]`, 'g'),
+                ];
+                
+                for (const pattern of patterns) {
+                    const match = pattern.exec(text);
+                    if (match && match[1]) {
+                        const extractedText = match[1].trim();
+                        // Validate extracted text before assigning
+                        if (isValidReferenceText(extractedText)) {
+                            ref.text = extractedText;
+                            break;
+                        } else {
+                            console.log('🚫 Skipping invalid inline reference:', extractedText);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Clean up: Remove references that still have placeholder text (meaning no valid text was found)
+    const validExtractedReferences = extractedReferences.filter(ref => {
+        if (ref.text.includes('(source not provided)')) {
+            console.log('🧹 Removing reference with no valid source found:', ref.number);
+            return false;
+        }
+        return true;
+    });
+
+    // If we filtered out references, we need to clean up the processed text to remove orphaned footnotes
+    if (validExtractedReferences.length < extractedReferences.length) {
+        console.log(`🔧 Cleaned up ${extractedReferences.length - validExtractedReferences.length} invalid references`);
+        
+        // Remove footnote citations for references that were filtered out
+        const validNumbers = new Set(validExtractedReferences.map(r => r.number));
+        const footnoteRegex = /\[\^(\d+)\]/g;
+        
+        processedText = processedText.replace(footnoteRegex, (match, num) => {
+            const number = parseInt(num);
+            if (!validNumbers.has(number)) {
+                console.log('🧹 Removing orphaned footnote citation:', match);
+                return '';
+            }
+            return match;
+        });
+    }
+
     return {
         text: processedText,
-        extractedReferences
+        extractedReferences: validExtractedReferences
     };
 }
 

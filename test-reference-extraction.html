@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reference Extraction Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #f5f5f5; }
+        .test-container { max-width: 1200px; margin: 0 auto; }
+        .test-case { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .input-text { background: #f0f0f0; padding: 15px; border-radius: 4px; margin: 10px 0; }
+        .output { background: #e8f5e8; padding: 15px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #4CAF50; }
+        .error { background: #ffebee; padding: 15px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #f44336; }
+        pre { white-space: pre-wrap; margin: 0; }
+        button { background: #2196F3; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; margin: 5px; }
+        button:hover { background: #1976D2; }
+        .references-list { background: #fff3e0; padding: 15px; border-radius: 4px; margin: 10px 0; border-left: 4px solid #FF9800; }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🔍 Reference Extraction Test Tool</h1>
+        <p>Test the reference processing system with various input formats:</p>
+
+        <div class="test-case">
+            <h3>Test Case 1: Standard Format</h3>
+            <div class="input-text">
+                <pre>Based on recent research [^1] and studies [^2], AI development is accelerating.
+
+References:
+1. Smith, J. et al. (2023) "Advanced AI Development" - Nature AI Journal
+2. Johnson, M. (2024) "Modern Computing Approaches" - IEEE Computer Society</pre>
+            </div>
+            <button onclick="testCase1()">Test This Case</button>
+            <div id="result1"></div>
+        </div>
+
+        <div class="test-case">
+            <h3>Test Case 2: Missing References Section</h3>
+            <div class="input-text">
+                <pre>According to Smith et al. [^1] and Johnson's research [^2], the field is evolving rapidly. The work by Brown [^3] also supports this view.</pre>
+            </div>
+            <button onclick="testCase2()">Test This Case</button>
+            <div id="result2"></div>
+        </div>
+
+        <div class="test-case">
+            <h3>Test Case 3: Alternative Format</h3>
+            <div class="input-text">
+                <pre>Recent work [1] shows promise, while other studies [2] suggest caution.
+
+**References**
+1. OpenAI Research Paper (2024) - "GPT-4 Technical Report"
+2. MIT Technology Review - "AI Safety Concerns and Solutions"</pre>
+            </div>
+            <button onclick="testCase3()">Test This Case</button>
+            <div id="result3"></div>
+        </div>
+
+        <div class="test-case">
+            <h3>Custom Test</h3>
+            <textarea id="customInput" rows="8" cols="80" placeholder="Paste your own text with references here..."></textarea>
+            <br>
+            <button onclick="testCustom()">Test Custom Input</button>
+            <div id="resultCustom"></div>
+        </div>
+    </div>
+
+    <script>
+        // Mock implementations for testing
+        function uuidv4() {
+            return 'test-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        function processReferences(text, existingRefs = []) {
+            const extractedReferences = [];
+            let processedText = text;
+            let nextReferenceNumber = Math.max(...existingRefs.map(r => r.number), 0) + 1;
+            
+            const originalToNewReferenceMap = new Map();
+            const numberMappings = new Map();
+            
+            // Find footnote patterns
+            const footnotePatterns = [
+                /\[\^(\d+)\]/g,
+                /\[(\d+)\]/g
+            ];
+            
+            const originalNumbers = new Set();
+            
+            for (const pattern of footnotePatterns) {
+                let match;
+                while ((match = pattern.exec(text)) !== null) {
+                    const originalNumber = parseInt(match[1]);
+                    if (originalNumber >= 1 && originalNumber <= 999) {
+                        originalNumbers.add(originalNumber.toString());
+                    }
+                }
+            }
+            
+            // Create reference objects
+            for (const originalNumber of originalNumbers) {
+                const newReference = {
+                    id: uuidv4(),
+                    text: `Reference ${originalNumber} (source not provided)`,
+                    messageId: 'test-msg',
+                    number: nextReferenceNumber
+                };
+                
+                originalToNewReferenceMap.set(originalNumber, newReference);
+                numberMappings.set(originalNumber, nextReferenceNumber);
+                extractedReferences.push(newReference);
+                
+                nextReferenceNumber++;
+            }
+            
+            // Replace citations
+            for (const pattern of footnotePatterns) {
+                let match;
+                while ((match = pattern.exec(text)) !== null) {
+                    const originalNumber = parseInt(match[1]);
+                    const footnoteText = match[0];
+                    const newNumber = numberMappings.get(originalNumber.toString());
+                    
+                    if (newNumber) {
+                        processedText = processedText.replaceAll(footnoteText, `[^${newNumber}]`);
+                    }
+                }
+            }
+            
+            // Look for reference sections
+            const referenceSectionPatterns = [
+                /(?:References?|Sources?|Bibliography):\s*\n((?:\d+\.\s*.+?(?:\n|$))*)/gi,
+                /\*\*(?:References?|Sources?|Bibliography)\*\*\s*\n((?:\d+\.\s*.+?(?:\n|$))*)/gi,
+                /#{1,3}\s*(?:References?|Sources?|Bibliography)\s*\n((?:\d+\.\s*.+?(?:\n|$))*)/gi
+            ];
+            
+            for (const pattern of referenceSectionPatterns) {
+                const refSectionMatch = pattern.exec(text);
+                if (refSectionMatch) {
+                    const referenceSection = refSectionMatch[1];
+                    const referenceLineRegex = /(\d+)\.\s*(.+?)(?=\n|$)/g;
+                    
+                    let refMatch;
+                    while ((refMatch = referenceLineRegex.exec(referenceSection)) !== null) {
+                        const originalNumber = refMatch[1];
+                        const referenceText = refMatch[2].trim();
+                        
+                        const reference = originalToNewReferenceMap.get(originalNumber);
+                        if (reference && referenceText) {
+                            reference.text = referenceText;
+                        }
+                    }
+                    
+                    // Rebuild reference section
+                    if (extractedReferences.length > 0) {
+                        const footnoteDefinitions = extractedReferences
+                            .sort((a, b) => a.number - b.number)
+                            .map(ref => `[^${ref.number}]: ${ref.text}`)
+                            .join('\n');
+                        
+                        processedText = processedText.replace(refSectionMatch[0], footnoteDefinitions);
+                    }
+                    break;
+                }
+            }
+            
+            // If no reference section was found, try to infer from context
+            if (extractedReferences.some(ref => ref.text.includes('(source not provided)'))) {
+                extractedReferences.forEach(ref => {
+                    const originalNum = Array.from(originalToNewReferenceMap.entries())
+                        .find(([_, refObj]) => refObj.id === ref.id)?.[0];
+                    
+                    if (originalNum && ref.text.includes('(source not provided)')) {
+                        const patterns = [
+                            new RegExp(`([A-Z][a-zA-Z]+ et al\\.?).*?\\[\\^?${originalNum}\\]`, 'g'),
+                            new RegExp(`\\[\\^?${originalNum}\\].*?\\(([^)]+)\\)`, 'g'),
+                            new RegExp(`([A-Z][a-zA-Z]+(?:'s)?).*?\\[\\^?${originalNum}\\]`, 'g'),
+                        ];
+                        
+                        for (const pattern of patterns) {
+                            const match = pattern.exec(text);
+                            if (match && match[1]) {
+                                ref.text = match[1].trim();
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+            
+            return {
+                processedText,
+                extractedReferences: extractedReferences.sort((a, b) => a.number - b.number)
+            };
+        }
+
+        function displayResult(resultId, result) {
+            const container = document.getElementById(resultId);
+            container.innerHTML = `
+                <div class="output">
+                    <h4>Processed Text:</h4>
+                    <pre>${result.processedText}</pre>
+                </div>
+                <div class="references-list">
+                    <h4>Extracted References (${result.extractedReferences.length}):</h4>
+                    ${result.extractedReferences.length > 0 ? 
+                        result.extractedReferences.map(ref => 
+                            `<div><strong>${ref.number}.</strong> ${ref.text}</div>`
+                        ).join('') :
+                        '<div>No references found</div>'
+                    }
+                </div>
+            `;
+        }
+
+        function testCase1() {
+            const text = `Based on recent research [^1] and studies [^2], AI development is accelerating.
+
+References:
+1. Smith, J. et al. (2023) "Advanced AI Development" - Nature AI Journal
+2. Johnson, M. (2024) "Modern Computing Approaches" - IEEE Computer Society`;
+            
+            const result = processReferences(text);
+            displayResult('result1', result);
+        }
+
+        function testCase2() {
+            const text = `According to Smith et al. [^1] and Johnson's research [^2], the field is evolving rapidly. The work by Brown [^3] also supports this view.`;
+            
+            const result = processReferences(text);
+            displayResult('result2', result);
+        }
+
+        function testCase3() {
+            const text = `Recent work [1] shows promise, while other studies [2] suggest caution.
+
+**References**
+1. OpenAI Research Paper (2024) - "GPT-4 Technical Report"
+2. MIT Technology Review - "AI Safety Concerns and Solutions"`;
+            
+            const result = processReferences(text);
+            displayResult('result3', result);
+        }
+
+        function testCustom() {
+            const text = document.getElementById('customInput').value;
+            if (!text.trim()) {
+                document.getElementById('resultCustom').innerHTML = '<div class="error">Please enter some text to test</div>';
+                return;
+            }
+            
+            const result = processReferences(text);
+            displayResult('resultCustom', result);
+        }
+
+        // Auto-run first test on page load
+        window.onload = function() {
+            console.log('Reference extraction test tool loaded');
+        };
+    </script>
+</body>
+</html>

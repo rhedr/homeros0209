@@ -275,48 +275,128 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
           remarkPlugins={[remarkGfm]}
           className="prose prose-sm max-w-none dark:prose-invert"
           components={{
-            sup: ({ children, ...props }) => (
-              <sup 
-                {...props} 
-                className="text-primary cursor-pointer hover:underline"
-                onClick={(e) => {
-                  e.preventDefault();
-                  const footnoteId = `user-content-fn-${children}`;
-                  const footnote = document.getElementById(footnoteId);
-                  if (footnote) {
-                    footnote.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                  }
-                }}
-              >
-                {children}
-              </sup>
-            ),
+            // We handle sup elements through the 'a' component customization below
             // Customize footnote reference rendering
             a: ({ href, children, ...props }) => {
               // Check if this is a footnote reference link
               if (href && href.startsWith('#user-content-fn-')) {
                 return (
-                  <sup className="text-primary cursor-pointer hover:underline">
+                  <sup 
+                    className="text-primary cursor-pointer hover:underline"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('📝 In-text citation clicked! href:', href);
+                      console.log('📝 Event target:', e.target);
+                      
+                      const footnoteId = href.replace('#', '');
+                      console.log('🎯 Looking for footnote with ID:', footnoteId);
+                      
+                      // Try multiple methods to find the footnote
+                      let footnote = document.getElementById(footnoteId);
+                      console.log('📍 getElementById result:', footnote);
+                      
+                      if (!footnote) {
+                        // Try alternative selectors
+                        const altSelectors = [
+                          `#${footnoteId}`,
+                          `[id="${footnoteId}"]`,
+                          `li[id="${footnoteId}"]`
+                        ];
+                        
+                        for (const selector of altSelectors) {
+                          footnote = document.querySelector(selector);
+                          console.log(`🔍 Trying selector "${selector}":`, footnote);
+                          if (footnote) break;
+                        }
+                      }
+                      
+                      console.log('📍 Final footnote element:', footnote);
+                      if (footnote) {
+                        footnote.scrollIntoView({ 
+                          behavior: 'smooth', 
+                          block: 'center',
+                          inline: 'nearest' 
+                        });
+                        // Add a brief highlight effect to the reference
+                        footnote.style.transition = 'background-color 0.3s ease';
+                        footnote.style.backgroundColor = '#fef3c7';
+                        setTimeout(() => {
+                          footnote.style.backgroundColor = '';
+                          setTimeout(() => {
+                            footnote.style.transition = '';
+                          }, 300);
+                        }, 2000);
+                      }
+                    }}
+                  >
                     <a {...props} href={href}>{children}</a>
                   </sup>
                 );
               }
               // Check if this is a footnote return link (the arrows!)
               if (href && href.startsWith('#user-content-fnref-')) {
-                // Reduce the number of return links by only showing one per footnote
-                const isFirstReturn = !props.className?.includes('footnote-back-multiple');
-                if (!isFirstReturn) {
-                  return null; // Hide duplicate return links
-                }
+                console.log('🏹 Processing footnote return link:', href, 'props.className:', props.className);
                 return (
-                  <a 
-                    {...props} 
-                    href={href}
-                    className="text-xs text-muted-foreground hover:text-primary ml-2"
-                    title="Return to reference"
+                  <span 
+                    className="text-xs text-muted-foreground hover:text-primary ml-2 cursor-pointer"
+                    title="Return to reference in text"
+                    onMouseEnter={() => {
+                      console.log('🖱️ Mouse entered arrow span');
+                    }}
+                    onMouseDown={() => {
+                      console.log('🖱️ Mouse down on arrow span');
+                    }}
+                    onMouseUp={() => {
+                      console.log('🖱️ Mouse up on arrow span');
+                    }}
+                    onClick={(e) => {
+                      console.log('🔙 SPAN WRAPPER CLICKED! Event:', e.type);
+                      console.log('🔙 Target:', e.target);
+                      console.log('🔙 CurrentTarget:', e.currentTarget);
+                      e.preventDefault();
+                      e.stopPropagation();
+                      
+                      // Extract reference id from href like #user-content-fnref-1 or #user-content-fnref-1-2
+                      const refId = href.replace('#user-content-fnref-', '');
+                      const baseRefNumber = refId.split('-')[0];
+                      console.log('🎯 Extracted refId:', refId, 'baseRefNumber:', baseRefNumber);
+                      
+                      // Try multiple selectors to find the corresponding in-text citation
+                      const selectors = [
+                        `[href="#user-content-fn-${baseRefNumber}"]`,
+                        `a[href="#user-content-fn-${baseRefNumber}"]`,
+                        `sup a[href="#user-content-fn-${baseRefNumber}"]`,
+                        `[id="user-content-fn-${baseRefNumber}"] a`,
+                      ];
+                      let citation: Element | null = null;
+                      for (const selector of selectors) {
+                        const candidate = document.querySelector(selector);
+                        console.log(`🔍 Trying selector "${selector}":`, candidate);
+                        if (candidate) { citation = candidate; break; }
+                      }
+                      console.log('📍 Final citation element:', citation);
+                      
+                      if (citation) {
+                        citation.scrollIntoView({ 
+                          behavior: 'smooth', 
+                          block: 'center',
+                          inline: 'nearest' 
+                        });
+                        // Add highlight effect
+                        citation.style.transition = 'background-color 0.3s ease';
+                        citation.style.backgroundColor = '#fef3c7';
+                        setTimeout(() => {
+                          citation.style.backgroundColor = '';
+                          setTimeout(() => {
+                            citation.style.transition = '';
+                          }, 300);
+                        }, 2000);
+                      }
+                    }}
                   >
                     ↩
-                  </a>
+                  </span>
                 );
               }
               // Regular links

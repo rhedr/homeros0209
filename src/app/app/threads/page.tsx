@@ -69,26 +69,40 @@ export default function ThreadsPage() {
     }));
   };
 
-  useEffect(() => {
-    let loadedThreads: Thread[] = [];
+  const loadThreads = React.useCallback(() => {
+    const list: Thread[] = [];
     if (typeof window !== 'undefined' && window.localStorage) {
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (key && key.startsWith('thread-')) {
           try {
             const threadData = JSON.parse(localStorage.getItem(key) || '');
-            loadedThreads.push(threadData);
+            list.push(threadData);
           } catch (e) {
             console.error('Failed to parse thread from local storage', e);
           }
         }
       }
     }
-    
-    // Sort by most recently updated
-    loadedThreads.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    setThreads(loadedThreads);
+    list.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    setThreads(list);
   }, []);
+
+  useEffect(() => {
+    loadThreads();
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || e.key.startsWith('thread-')) {
+        loadThreads();
+      }
+    };
+    const handleThreadsUpdated = () => loadThreads();
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('threads-updated', handleThreadsUpdated as EventListener);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('threads-updated', handleThreadsUpdated as EventListener);
+    };
+  }, [loadThreads]);
 
   const categories = React.useMemo(() => [...new Set(threads.map(t => t.category))], [threads]);
   const allTags = React.useMemo(() => [...new Set(threads.flatMap(t => t.tags))], [threads]);
@@ -198,6 +212,8 @@ export default function ThreadsPage() {
         const currentThread = JSON.parse(currentThreadStr);
         const newThreadData = { ...currentThread, ...updatedThread, updatedAt: new Date().toISOString() };
         localStorage.setItem(`thread-${threadId}`, JSON.stringify(newThreadData));
+        // notify other pages/components in the same tab
+        window.dispatchEvent(new Event('threads-updated'));
       } catch (e) {
           console.error("Failed to update thread in localStorage", e);
       }
