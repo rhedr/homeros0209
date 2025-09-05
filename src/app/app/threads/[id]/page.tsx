@@ -288,13 +288,15 @@ export default function ThreadPage() {
         
         // Update thread references
         const updatedThreadReferences = updateThreadReferences(threadReferences, newReferences);
+        // Ensure continuous numbering after merge
+        const renumbered = updatedThreadReferences.map((ref, idx) => ({ ...ref, number: idx + 1 }));
         
         console.log('📚 Thread references updated:', {
           before: threadReferences.length,
           after: updatedThreadReferences.length,
           allRefs: updatedThreadReferences.map(r => ({ number: r.number, text: r.text.substring(0, 50) + (r.text.length > 50 ? '...' : '') }))
         });
-        setThreadReferences(updatedThreadReferences);
+        setThreadReferences(renumbered);
         
         setMessages(currentMessages => {
             const updatedMessages = currentMessages.map(m => m.id === 'thinking' ? aiMessage : m);
@@ -310,8 +312,8 @@ export default function ThreadPage() {
               };
               updateThreadInStorage(threadId, { 
                 messages: updatedMessages, 
-                threadReferences: updatedThreadReferences,
-                referenceCounter: updatedData.referenceCounter
+                threadReferences: renumbered,
+                referenceCounter: renumbered.length
               });
               return updatedData;
             });
