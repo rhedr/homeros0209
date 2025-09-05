@@ -78,70 +78,74 @@ export const calculateNormalizedOffsets = (
 ): { start: number; end: number; text: string } | null => {
   if (!selection.rangeCount) return null;
   const range = selection.getRangeAt(0);
-  
-  const rawSelectedText = selection.toString();
+
+  // Get the selected text and normalize it
+  const rawSelectedText = range.toString();
   const normalizedSelectedText = normalizeWhitespace(rawSelectedText);
   
-  // If the selection is only whitespace or too short, ignore it.
+  // If the selection is only whitespace or too short, ignore it
   if (!normalizedSelectedText || normalizedSelectedText.length < 1) {
     return null;
   }
   
   try {
-    // Simpler approach: use the full text and search for the selected text
+    // Use simple search approach: get full normalized text and find the selection within it
     const fullNormalizedText = getFullNormalizedText(container);
     
-    // First try: get text before selection using DOM ranges
-    let normalizedStart = 0;
-    try {
-      const preRange = range.cloneRange();
-      preRange.selectNodeContents(container);
-      preRange.setEnd(range.startContainer, range.startOffset);
-      const preText = preRange.toString();
-      const normalizedPreText = normalizeWhitespace(preText);
-      normalizedStart = normalizedPreText.length;
-    } catch (e) {
-      // DOM range approach failed, fall back to search
-      const searchIndex = fullNormalizedText.indexOf(normalizedSelectedText);
-      if (searchIndex !== -1) {
-        normalizedStart = searchIndex;
-      } else {
-        console.warn('Could not find selected text in normalized content');
-        return null;
+    // Find the selected text in the normalized full text
+    const searchIndex = fullNormalizedText.indexOf(normalizedSelectedText);
+    if (searchIndex === -1) {
+      console.warn('Could not find selected text in normalized content');
+      return null;
+    }
+    
+    // If there are multiple occurrences, try to find the right one by using position hints
+    let bestIndex = searchIndex;
+    const allIndices = [];
+    let currentIndex = fullNormalizedText.indexOf(normalizedSelectedText, 0);
+    while (currentIndex !== -1) {
+      allIndices.push(currentIndex);
+      currentIndex = fullNormalizedText.indexOf(normalizedSelectedText, currentIndex + 1);
+    }
+    
+    // If multiple matches, try to pick the best one based on selection position
+    if (allIndices.length > 1) {
+      try {
+        // Get approximate position by analyzing range position
+        const preRange = document.createRange();
+        preRange.selectNodeContents(container);
+        preRange.setEnd(range.startContainer, range.startOffset);
+        const preText = preRange.toString();
+        const normalizedPreText = normalizeWhitespace(preText);
+        const approximateStart = normalizedPreText.length;
+        
+        // Find the closest match to our approximate position
+        let minDistance = Infinity;
+        for (const index of allIndices) {
+          const distance = Math.abs(index - approximateStart);
+          if (distance < minDistance) {
+            minDistance = distance;
+            bestIndex = index;
+          }
+        }
+      } catch (e) {
+        // If range analysis fails, use the first match
+        bestIndex = searchIndex;
       }
     }
     
-    const normalizedEnd = normalizedStart + normalizedSelectedText.length;
+    console.log('Selection offset calculation successful:', {
+      selectedText: normalizedSelectedText,
+      start: bestIndex,
+      end: bestIndex + normalizedSelectedText.length,
+      multipleMatches: allIndices.length > 1
+    });
     
-    // Validate the result
-    const extractedText = fullNormalizedText.substring(normalizedStart, normalizedEnd);
-    if (normalizeWhitespace(extractedText) === normalizedSelectedText) {
-      console.log('Selection offset calculation successful:', {
-        selectedText: normalizedSelectedText,
-        start: normalizedStart,
-        end: normalizedEnd,
-        extractedMatch: extractedText === normalizedSelectedText
-      });
-      
-      return {
-        start: normalizedStart,
-        end: normalizedEnd,
-        text: normalizedSelectedText
-      };
-    } else {
-      // Fall back to search-based approach
-      console.log('Range-based calculation failed, using search fallback');
-      const searchIndex = fullNormalizedText.indexOf(normalizedSelectedText);
-      if (searchIndex !== -1) {
-        return {
-          start: searchIndex,
-          end: searchIndex + normalizedSelectedText.length,
-          text: normalizedSelectedText
-        };
-      }
-    }
-    
-    return null;
+    return {
+      start: bestIndex,
+      end: bestIndex + normalizedSelectedText.length,
+      text: normalizedSelectedText
+    };
   } catch (error) {
     console.warn('Error calculating normalized offsets:', error);
     return null;

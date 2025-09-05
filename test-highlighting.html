@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Highlighting Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+            line-height: 1.6;
+        }
+        
+        .test-container {
+            background: #f8f9fa;
+            padding: 2rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            border: 1px solid #e9ecef;
+        }
+        
+        .controls {
+            margin: 1rem 0;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 0.5rem;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        mark[data-highlight-id] {
+            background-color: #ffeb3b;
+            padding: 1px 2px;
+            border-radius: 2px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        .prose {
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .prose p {
+            margin: 1rem 0;
+        }
+        
+        .prose li {
+            margin: 0.5rem 0;
+        }
+        
+        ul {
+            padding-left: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>Highlighting System Test</h1>
+    
+    <div class="test-container">
+        <h2>Test Case 1: Simple Text</h2>
+        <div class="controls">
+            <button onclick="testSimpleHighlight()">Highlight "Working out to failure"</button>
+            <button onclick="clearHighlights()">Clear Highlights</button>
+        </div>
+        <div id="test1" class="prose">
+            <p>Working out to failure (the point where you can't complete another repetition with proper form) is a technique used in strength training to maximize muscle growth. However, it may not be appropriate for everyone, especially those with heart conditions. It is especially important to discuss with your cardiologist.</p>
+        </div>
+    </div>
+    
+    <div class="test-container">
+        <h2>Test Case 2: Complex Formatting</h2>
+        <div class="controls">
+            <button onclick="testComplexHighlight()">Highlight "aerobic exercise"</button>
+            <button onclick="clearHighlights()">Clear Highlights</button>
+        </div>
+        <div id="test2" class="prose">
+            <p><strong>Types of Exercise:</strong> A combination of both <em>aerobic exercise</em> and strength training is generally recommended for improving cardiovascular health.</p>
+            <ul>
+                <li>Aerobic exercise: Activities like brisk walking, jogging, cycling, or swimming can improve your heart's efficiency.</li>
+                <li>Strength training: Using weights or resistance bands can help build muscle mass, which can support overall health.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // Simplified versions of the highlighting functions for testing
+        function normalizeWhitespace(text) {
+            if (!text) return '';
+            return text.replace(/\\s+/g, ' ').trim();
+        }
+        
+        function getFullNormalizedText(container) {
+            const fullRawText = container.textContent || '';
+            return normalizeWhitespace(fullRawText);
+        }
+        
+        function createHighlightMark(id, content, color = '#ffeb3b') {
+            const mark = document.createElement('mark');
+            mark.setAttribute('data-highlight-id', id);
+            mark.textContent = content;
+            mark.style.backgroundColor = color;
+            mark.style.padding = '1px 2px';
+            mark.style.borderRadius = '2px';
+            mark.style.boxShadow = '0 1px 2px rgba(0,0,0,0.1)';
+            mark.style.display = 'inline';
+            mark.style.position = 'static';
+            mark.style.lineHeight = 'inherit';
+            mark.style.verticalAlign = 'baseline';
+            mark.style.margin = '0';
+            return mark;
+        }
+        
+        function getAllTextNodes(container) {
+            const textNodes = [];
+            const walker = document.createTreeWalker(
+                container,
+                NodeFilter.SHOW_TEXT,
+                {
+                    acceptNode: (node) => {
+                        return node.textContent && node.textContent.trim().length > 0 
+                            ? NodeFilter.FILTER_ACCEPT 
+                            : NodeFilter.FILTER_REJECT;
+                    }
+                }
+            );
+            
+            let node;
+            while ((node = walker.nextNode())) {
+                textNodes.push(node);
+            }
+            
+            return textNodes;
+        }
+        
+        function highlightInTextNode(textNode, highlightText, id) {
+            const nodeText = textNode.textContent || '';
+            const normalizedNodeText = normalizeWhitespace(nodeText);
+            const normalizedHighlightText = normalizeWhitespace(highlightText);
+            
+            const index = normalizedNodeText.indexOf(normalizedHighlightText);
+            if (index === -1) {
+                return false;
+            }
+            
+            try {
+                const parent = textNode.parentNode;
+                if (!parent) return false;
+                
+                // Map normalized positions back to raw positions
+                let rawStartIndex = 0;
+                let rawEndIndex = nodeText.length;
+                let normalizedPos = 0;
+                let foundStart = false;
+                let foundEnd = false;
+                
+                for (let i = 0; i < nodeText.length && (!foundStart || !foundEnd); i++) {
+                    const char = nodeText[i];
+                    const isWhitespace = /\\s/.test(char);
+                    const prevChar = i > 0 ? nodeText[i - 1] : '';
+                    const prevIsWhitespace = /\\s/.test(prevChar);
+                    
+                    if (!foundStart && normalizedPos === index) {
+                        rawStartIndex = i;
+                        foundStart = true;
+                    }
+                    
+                    if (!foundEnd && normalizedPos === index + normalizedHighlightText.length) {
+                        rawEndIndex = i;
+                        foundEnd = true;
+                    }
+                    
+                    if (!isWhitespace || (isWhitespace && !prevIsWhitespace)) {
+                        normalizedPos++;
+                    }
+                }
+                
+                if (!foundEnd && normalizedPos === index + normalizedHighlightText.length) {
+                    rawEndIndex = nodeText.length;
+                }
+                
+                const beforeText = nodeText.substring(0, rawStartIndex);
+                const highlightedText = nodeText.substring(rawStartIndex, rawEndIndex);
+                const afterText = nodeText.substring(rawEndIndex);
+                
+                const fragment = document.createDocumentFragment();
+                
+                if (beforeText) {
+                    fragment.appendChild(document.createTextNode(beforeText));
+                }
+                
+                const mark = createHighlightMark(id, highlightedText);
+                fragment.appendChild(mark);
+                
+                if (afterText) {
+                    fragment.appendChild(document.createTextNode(afterText));
+                }
+                
+                parent.replaceChild(fragment, textNode);
+                return true;
+            } catch (error) {
+                console.error('Error applying highlight to text node:', error);
+                return false;
+            }
+        }
+        
+        function applyHighlight(container, text, id) {
+            const fullText = getFullNormalizedText(container);
+            const highlightText = normalizeWhitespace(text);
+            
+            if (!fullText.includes(highlightText)) {
+                console.warn('Highlight text not found in container:', highlightText);
+                return false;
+            }
+            
+            const textNodes = getAllTextNodes(container);
+            
+            for (const textNode of textNodes) {
+                if (highlightInTextNode(textNode, highlightText, id)) {
+                    return true;
+                }
+            }
+            
+            console.warn('Could not apply highlight to any text node');
+            return false;
+        }
+        
+        function clearAllHighlights() {
+            document.querySelectorAll('mark[data-highlight-id]').forEach(mark => {
+                const parent = mark.parentNode;
+                if (parent && mark.textContent) {
+                    parent.replaceChild(document.createTextNode(mark.textContent), mark);
+                }
+            });
+            
+            // Normalize containers
+            document.querySelectorAll('.prose').forEach(container => {
+                container.normalize();
+            });
+        }
+        
+        function testSimpleHighlight() {
+            clearAllHighlights();
+            const container = document.getElementById('test1');
+            applyHighlight(container, 'Working out to failure', 'test-highlight-1');
+        }
+        
+        function testComplexHighlight() {
+            clearAllHighlights();
+            const container = document.getElementById('test2');
+            applyHighlight(container, 'aerobic exercise', 'test-highlight-2');
+        }
+        
+        function clearHighlights() {
+            clearAllHighlights();
+        }
+    </script>
+</body>
+</html>

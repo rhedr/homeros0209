@@ -180,7 +180,7 @@ type ThreadData = {
   colorDescriptions?: Record<string, string>;
 };
 
-export type CreateHighlightData = Omit<Highlight, 'id' | 'groupId'>;
+export type CreateHighlightData = Omit<Highlight, 'id'>;
 
 export type SearchMatch = {
   messageId: string;
@@ -545,16 +545,31 @@ export default function ThreadPage() {
   };
 
   const handleHighlightCreate = (highlightData: CreateHighlightData) => {
-    console.log('handleHighlightCreate called with:', highlightData);
+    console.log('🚀 handleHighlightCreate called with:', {
+      text: highlightData.text.substring(0, 50) + '...',
+      messageId: highlightData.messageId,
+      groupId: highlightData.groupId || 'no-group',
+      start: highlightData.start,
+      end: highlightData.end
+    });
     const newHighlight: Highlight = {
         ...highlightData,
         id: uuidv4(),
     };
-    console.log('New highlight created:', newHighlight);
-    const updatedHighlights = [...highlights, newHighlight];
-    console.log('Updated highlights array:', updatedHighlights);
-    setHighlights(updatedHighlights);
-    updateThreadInStorage(threadId, { highlights: updatedHighlights });
+    console.log('🚀 New highlight created with ID:', newHighlight.id);
+    
+    // Use functional update to avoid stale closure issues with rapid state updates
+    setHighlights(prevHighlights => {
+      console.log('🚀 Functional update: previous count', prevHighlights.length);
+      const updatedHighlights = [...prevHighlights, newHighlight];
+      console.log('🚀 Functional update: new count', updatedHighlights.length);
+      console.log('🚀 All groupIds in array:', updatedHighlights.map(h => h.groupId || 'no-group'));
+      
+      // Update storage with new highlights array
+      updateThreadInStorage(threadId, { highlights: updatedHighlights });
+      return updatedHighlights;
+    });
+    
     toast({ title: "Highlight created!"});
   }
 

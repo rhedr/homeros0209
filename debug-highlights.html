@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Multi-element Highlighting</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+            line-height: 1.6;
+        }
+        
+        .test-container {
+            background: #f8f9fa;
+            padding: 2rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            border: 1px solid #e9ecef;
+        }
+        
+        .controls {
+            margin: 1rem 0;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 0.5rem;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        mark[data-highlight-id] {
+            background-color: #ffeb3b;
+            padding: 1px 2px;
+            border-radius: 2px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        .prose {
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .prose p {
+            margin: 1rem 0;
+        }
+        
+        .prose h3 {
+            margin: 1.5rem 0 1rem 0;
+            color: #2c3e50;
+        }
+        
+        .prose li {
+            margin: 0.5rem 0;
+        }
+        
+        ul {
+            padding-left: 2rem;
+        }
+        
+        .debug-log {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 1rem;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            margin: 1rem 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Debug Multi-element Highlighting</h1>
+    
+    <div class="test-container">
+        <h2>Test Case: Multi-element Selection</h2>
+        <div class="controls">
+            <button onclick="simulateMultiSelect()">Simulate Multi-Element Selection</button>
+            <button onclick="clearHighlights()">Clear Highlights</button>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+        <div id="test-content" class="prose">
+            <h3>Exercise for Heart Health</h3>
+            <p>Working out to failure (the point where you can't complete another repetition with proper form) is a technique used in strength training to maximize muscle growth.</p>
+            <h3>Important Considerations</h3>
+            <p>However, it may not be appropriate for everyone, especially those with heart conditions. It is especially important to discuss with your cardiologist.</p>
+            <h3>Types of Exercise</h3>
+            <p>A combination of both aerobic exercise and strength training is generally recommended for improving cardiovascular health.</p>
+        </div>
+    </div>
+    
+    <div id="debug-log" class="debug-log"></div>
+
+    <script>
+        function log(message) {
+            const debugLog = document.getElementById('debug-log');
+            const timestamp = new Date().toLocaleTimeString();
+            debugLog.innerHTML += `[${timestamp}] ${message}\n`;
+            debugLog.scrollTop = debugLog.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearLog() {
+            document.getElementById('debug-log').innerHTML = '';
+        }
+        
+        function normalizeWhitespace(text) {
+            if (!text) return '';
+            return text.replace(/\s+/g, ' ').trim();
+        }
+        
+        function calculateTextOffset(container, node, offset) {
+            const walker = document.createTreeWalker(
+                container,
+                NodeFilter.SHOW_TEXT,
+                null
+            );
+            
+            let currentOffset = 0;
+            let currentNode;
+            
+            while (currentNode = walker.nextNode()) {
+                if (currentNode === node) {
+                    return currentOffset + offset;
+                }
+                currentOffset += (currentNode.textContent || '').length;
+            }
+            
+            return -1;
+        }
+        
+        // Simulate the exact logic from MessageRenderer
+        function simulateMultiSelect() {
+            clearHighlights();
+            clearLog();
+            
+            const container = document.getElementById('test-content');
+            const groupId = `grp-${Date.now()}`;
+            
+            // Create a range that spans multiple elements
+            const range = document.createRange();
+            
+            // Start from the first h3 element
+            const firstH3 = container.querySelector('h3');
+            const lastP = container.querySelectorAll('p')[2]; // Last paragraph
+            
+            range.setStartBefore(firstH3);
+            range.setEndAfter(lastP);
+            
+            log(`🎯 Created test range from ${firstH3.textContent} to ${lastP.textContent.substring(0, 30)}...`);
+            
+            // Simulate the block processing logic
+            const blocks = Array.from(container.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,div'));
+            const ranges = [];
+            
+            log(`📋 Found ${blocks.length} blocks to process`);
+            
+            blocks.forEach((block, blockIndex) => {
+                if (!range.intersectsNode(block)) {
+                    log(`❌ Block ${blockIndex} (${block.tagName}): not intersected, skipping`);
+                    return;
+                }
+                
+                log(`✅ Block ${blockIndex} (${block.tagName}): processing...`);
+                
+                try {
+                    const r = document.createRange();
+                    r.selectNodeContents(block);
+                    
+                    let actualStart = r.startContainer;
+                    let actualStartOffset = r.startOffset;
+                    let actualEnd = r.endContainer;
+                    let actualEndOffset = r.endOffset;
+                    
+                    if (range.compareBoundaryPoints(Range.START_TO_START, r) > 0) {
+                        actualStart = range.startContainer;
+                        actualStartOffset = range.startOffset;
+                        log(`  📍 Block ${blockIndex}: using user selection start`);
+                    }
+                    
+                    if (range.compareBoundaryPoints(Range.END_TO_END, r) < 0) {
+                        actualEnd = range.endContainer;
+                        actualEndOffset = range.endOffset;
+                        log(`  📍 Block ${blockIndex}: using user selection end`);
+                    }
+                    
+                    const trimmedRange = document.createRange();
+                    trimmedRange.setStart(actualStart, actualStartOffset);
+                    trimmedRange.setEnd(actualEnd, actualEndOffset);
+                    
+                    const text = trimmedRange.toString().replace(/\s+/g, ' ').trim();
+                    log(`  📝 Block ${blockIndex} text: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+                    
+                    if (text.length > 0) {
+                        ranges.push({ range: trimmedRange, text, blockIndex });
+                        log(`  ✅ Block ${blockIndex}: added to ranges (total: ${ranges.length})`);
+                    } else {
+                        log(`  ⚠️ Block ${blockIndex}: empty text, skipping`);
+                    }
+                } catch (error) {
+                    log(`  ❌ Error processing block ${blockIndex}: ${error.message}`);
+                }
+            });
+            
+            log(`🎨 Creating ${ranges.length} grouped highlights with groupId: ${groupId}`);
+            
+            // Simulate highlight creation
+            let createdCount = 0;
+            ranges.forEach(({ range, text, blockIndex }, index) => {
+                if (!text) {
+                    log(`⚠️ Skipping empty text for range ${index}`);
+                    return;
+                }
+                
+                const startOffset = calculateTextOffset(container, range.startContainer, range.startOffset);
+                if (startOffset === -1) {
+                    log(`❌ Could not calculate start offset for text: ${text.substring(0, 50)}`);
+                    return;
+                }
+                
+                const highlightData = {
+                    text,
+                    start: startOffset,
+                    end: startOffset + text.length,
+                    color: '#ffeb3b',
+                    groupId,
+                    blockIndex
+                };
+                
+                log(`🎨 Creating highlight ${index + 1}/${ranges.length} (block ${blockIndex}): ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`);
+                
+                // Apply the highlight
+                if (applyHighlight(range, `highlight-${groupId}-${index}`)) {
+                    createdCount++;
+                    log(`✅ Successfully created highlight ${index + 1}/${ranges.length}`);
+                } else {
+                    log(`❌ Failed to create highlight ${index + 1}/${ranges.length}`);
+                }
+            });
+            
+            log(`🏁 Completed: ${createdCount}/${ranges.length} highlights created successfully`);
+        }
+        
+        function applyHighlight(range, id) {
+            try {
+                const mark = document.createElement('mark');
+                mark.setAttribute('data-highlight-id', id);
+                mark.style.backgroundColor = '#ffeb3b';
+                mark.style.padding = '1px 2px';
+                mark.style.borderRadius = '2px';
+                
+                if (range.collapsed) {
+                    log(`⚠️ Range is collapsed, cannot highlight`);
+                    return false;
+                }
+                
+                // Try to surround the contents
+                try {
+                    range.surroundContents(mark);
+                    return true;
+                } catch (surroundError) {
+                    log(`⚠️ SurroundContents failed: ${surroundError.message}, trying alternative`);
+                    
+                    // Fallback: clone and replace
+                    try {
+                        const clonedContents = range.cloneContents();
+                        mark.appendChild(clonedContents);
+                        range.deleteContents();
+                        range.insertNode(mark);
+                        return true;
+                    } catch (cloneError) {
+                        log(`❌ Clone and replace failed: ${cloneError.message}`);
+                        return false;
+                    }
+                }
+            } catch (error) {
+                log(`❌ Highlight application failed: ${error.message}`);
+                return false;
+            }
+        }
+        
+        function clearHighlights() {
+            document.querySelectorAll('mark[data-highlight-id]').forEach(mark => {
+                const parent = mark.parentNode;
+                if (parent && mark.textContent) {
+                    parent.replaceChild(document.createTextNode(mark.textContent), mark);
+                }
+            });
+            
+            // Normalize the container
+            document.getElementById('test-content').normalize();
+            log('🧹 Highlights cleared');
+        }
+        
+        // Add some initial instructions
+        window.addEventListener('load', () => {
+            log('🚀 Debug tool loaded. Click "Simulate Multi-Element Selection" to test highlighting logic.');
+            log('📝 This simulates selecting from the first header to the last paragraph.');
+        });
+    </script>
+</body>
+</html>

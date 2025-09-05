@@ -261,19 +261,12 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     // Strategy: split selection by meaningful block-level elements and create a
     // separate highlight for each contiguous text segment. Group them with a groupId.
     const groupId = `grp-${Date.now()}`;
-    // Get all potential highlight targets including footnote references
-    const allBlocks = Array.from(messageRef.current.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,strong,em,code,sup,a[href^="#fn"],a[href^="#user-content-fn"]')) as HTMLElement[];
-    const blocks = allBlocks.filter(block => {
-      // Only include blocks that have meaningful text content
-      const blockText = block.textContent?.trim() || '';
-      return blockText.length > 0;
-    });
-    
-    console.log('🔍 Found blocks for highlighting:', blocks.map(b => ({
-      tag: b.tagName,
-      text: b.textContent?.substring(0, 20) + '...',
-      hasFootnote: b.textContent?.includes('[^') || b.textContent?.includes(']')
-    })));
+    const blocks = Array.from(messageRef.current.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,strong,em,code')) as HTMLElement[]
+      .filter(block => {
+        // Only include blocks that have meaningful text content
+        const blockText = block.textContent?.trim() || '';
+        return blockText.length > 0;
+      });
     const ranges: { range: Range; text: string }[] = [];
     
     // Get full container text for offset calculations

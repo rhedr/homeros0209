@@ -15,7 +15,10 @@ type Highlight = {
     id: string;
     messageId: string;
     text: string;
+    start: number;
+    end: number;
     color?: string;
+    groupId?: string;
 };
 
 type Message = {
