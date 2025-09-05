@@ -1,4 +1,4 @@
-import { normalizeWhitespace, getFullNormalizedText } from "./textNormalization";
+import { normalizeWhitespace, getFullNormalizedText, buildTextNodeMap } from "./textNormalization";
 
 export interface Highlight {
   id: string;
@@ -366,6 +366,48 @@ const mapNormalizedOffsetToRaw = (rawText: string, normalizedOffset: number): nu
  * Applies a single highlight to a container using a robust search approach
  */
 const applyHighlight = (container: HTMLElement, highlight: Highlight): boolean => {
+  // First, try strict application by normalized offsets for complete coverage
+  const byOffsetsFirst = (() => {
+    try {
+      const start = Math.min(highlight.start, highlight.end);
+      const end = Math.max(highlight.start, highlight.end);
+      if (isNaN(start) || isNaN(end) || end <= start) return false;
+
+      const textNodes = buildTextNodeMap(container);
+      let applied = false;
+      for (const info of textNodes) {
+        const nodeStart = info.normalizedStart;
+        const nodeEnd = info.normalizedEnd;
+        const overlapStart = Math.max(start, nodeStart);
+        const overlapEnd = Math.min(end, nodeEnd);
+        if (overlapStart >= overlapEnd) continue;
+
+        const localStartNorm = overlapStart - nodeStart;
+        const localEndNorm = overlapEnd - nodeStart;
+        const raw = info.node.textContent || '';
+        const rawStart = mapNormalizedOffsetToRaw(raw, localStartNorm);
+        const rawEnd = mapNormalizedOffsetToRaw(raw, localEndNorm);
+
+        const before = raw.slice(0, rawStart);
+        const middle = raw.slice(rawStart, rawEnd);
+        const after = raw.slice(rawEnd);
+        const parent = info.node.parentNode;
+        if (!parent) continue;
+        const frag = document.createDocumentFragment();
+        if (before) frag.appendChild(document.createTextNode(before));
+        const mark = createHighlightMark(highlight, middle);
+        frag.appendChild(mark);
+        if (after) frag.appendChild(document.createTextNode(after));
+        parent.replaceChild(frag, info.node);
+        applied = true;
+      }
+      return applied;
+    } catch {
+      return false;
+    }
+  })();
+  if (byOffsetsFirst) return true;
+
   // Get all text from the container and normalize it
   const fullText = getFullNormalizedText(container);
   const highlightText = normalizeWhitespace(highlight.text);

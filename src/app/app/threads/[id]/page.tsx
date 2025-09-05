@@ -480,6 +480,8 @@ export default function ThreadPage() {
         const newThreadData = { ...currentThread, ...updatedFields, updatedAt: new Date().toISOString() };
         localStorage.setItem(`thread-${threadId}`, JSON.stringify(newThreadData));
         queryClient.invalidateQueries({ queryKey: ['threads'] });
+        // Notify threads list to reload categories immediately (same-tab update)
+        try { window.dispatchEvent(new Event('threads-updated')); } catch {}
         return newThreadData;
       } catch (e) {
           console.error("Failed to update thread in localStorage", e);
@@ -573,8 +575,9 @@ export default function ThreadPage() {
     toast({ title: "Highlight created!"});
   }
 
-  const handleDeleteHighlight = (highlightId: string) => {
-      const updatedHighlights = highlights.filter(h => h.id !== highlightId);
+  const handleDeleteHighlight = (highlightIds: string[]) => {
+      const idSet = new Set(highlightIds);
+      const updatedHighlights = highlights.filter(h => !idSet.has(h.id));
       setHighlights(updatedHighlights);
       updateThreadInStorage(threadId, { highlights: updatedHighlights });
       toast({ variant: 'destructive', title: "Highlight removed"});

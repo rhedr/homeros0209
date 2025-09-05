@@ -34,7 +34,7 @@ type InsightsPanelProps = {
   isLoadingAbstract: boolean;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
-  onDeleteHighlight: (highlightId: string) => void;
+  onDeleteHighlight: (highlightIds: string[]) => void;
   colorDescriptions: Record<string, string>;
   onSetColorDescription: (color: string, description: string) => void;
   onActionItemClick?: (actionText: string) => void;
@@ -219,7 +219,7 @@ export function InsightsPanel({
                                       </AccordionTrigger>
                                       <AccordionContent>
                                         <ol className="space-y-3 text-sm px-3 pb-3 pr-2 max-w-full">
-                                          {group.refs.map((ref, idx) => (
+                                          {group.refs.map((ref) => (
                                             <li
                                               key={ref.id}
                                               className="cursor-pointer hover:bg-accent/50 p-2 rounded-md transition-colors border-l-2 border-primary/20 max-w-full overflow-hidden"
@@ -230,7 +230,7 @@ export function InsightsPanel({
                                             >
                                               <div className="flex items-start gap-2">
                                                 <span className="font-medium text-primary text-xs bg-primary/10 px-1.5 py-0.5 rounded shrink-0">
-                                                  {idx + 1}
+                                                  {ref.number}
                                                 </span>
                                                 <div className="flex-1 min-w-0 break-words">
                                                   <span className="break-words whitespace-normal text-foreground">{ref.text}</span>
@@ -390,32 +390,64 @@ export function InsightsPanel({
                         <ScrollArea className="h-full px-4">
                             {highlights.length > 0 ? (
                                 <div className="space-y-4">
-                                {filteredHighlights.map(highlight => (
-                                    <Card 
-                                        key={highlight.id} 
-                                        className="bg-card group relative cursor-pointer" 
-                                        style={{ borderLeft: `4px solid ${highlight.color || 'transparent'}` }}
-                                        onClick={() => onHighlightClick?.(highlight)}
+                                {(() => {
+                                  const groups = filteredHighlights.reduce((acc, h) => {
+                                    const key = h.groupId || h.id;
+                                    if (!acc[key]) acc[key] = [] as typeof filteredHighlights;
+                                    acc[key].push(h);
+                                    return acc;
+                                  }, {} as Record<string, typeof filteredHighlights>);
+                                  return Object.entries(groups).map(([groupKey, items]) => {
+                                    // Sort by start index when available so snippets appear in reading order
+                                    const sorted = [...items].sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+                                    const primary = sorted[0];
+                                    // De-duplicate snippets using normalized whitespace to avoid repeated lines
+                                    const seen = new Set<string>();
+                                    const uniqueItems = sorted.filter(h => {
+                                      const norm = (h.text || '').replace(/\s+/g, ' ').trim();
+                                      if (seen.has(norm)) return false;
+                                      seen.add(norm);
+                                      return true;
+                                    });
+                                    // Compile the group's text into one normalized string
+                                    const compiledText = uniqueItems
+                                      .sort((a,b) => (a.start ?? 0) - (b.start ?? 0))
+                                      .map(h => h.text || '')
+                                      .join('\n')
+                                      .replace(/\s+/g, ' ')
+                                      .trim();
+                                    return (
+                                      <Card
+                                        key={groupKey}
+                                        className="bg-card group relative cursor-pointer"
+                                        style={{ borderLeft: `4px solid ${primary.color || 'transparent'}` }}
+                                        onClick={() => onHighlightClick?.({ ...primary, text: compiledText })}
                                         role="button"
                                         tabIndex={0}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onHighlightClick?.(highlight) }}
-                                    >
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="absolute top-1 right-1 h-6 w-6 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                                        onClick={(e) => { e.stopPropagation(); onDeleteHighlight(highlight.id); }}
-                                    >
-                                        <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                    <CardContent className="p-3">
-                                        <p className="text-sm text-foreground italic pr-6">
-                                        <Quote className="inline-block h-4 w-4 mr-2 text-muted-foreground/50" />
-                                        {highlight.text}
-                                        </p>
-                                    </CardContent>
-                                    </Card>
-                                ))}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onHighlightClick?.({ ...primary, text: compiledText }) }}
+                                      >
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="absolute top-1 right-1 h-6 w-6 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            // delete all items in this group with one atomic call
+                                            onDeleteHighlight(uniqueItems.map(h => h.id));
+                                          }}
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                        <CardContent className="p-3 space-y-2">
+                                          <p className="text-sm text-foreground italic pr-6">
+                                            <Quote className="inline-block h-4 w-4 mr-2 text-muted-foreground/50" />
+                                            {compiledText}
+                                          </p>
+                                        </CardContent>
+                                      </Card>
+                                    );
+                                  });
+                                })()}
                                 </div>
                             ) : (
                                 <div className="h-full flex items-center justify-center">

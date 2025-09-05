@@ -112,23 +112,18 @@ export default function ThreadsPage() {
   const [filterLogic, setFilterLogic] = React.useState<'AND' | 'OR'>('OR');
   
   useEffect(() => {
-    if (sortedCategories.length === 0 && threads.length > 0) {
-        const initialSortedCategories = Object.keys(threads.reduce((acc, thread) => {
-            const { category } = thread;
-            if (!acc[category]) {
-            acc[category] = [];
-            }
-            acc[category].push(thread);
-            return acc;
-        }, {} as Record<string, Thread[]>)
-        ).sort((a, b) => {
-            if (a === 'Unsorted') return -1;
-            if (b === 'Unsorted') return 1;
-            return a.localeCompare(b);
-        });
-        setSortedCategories(initialSortedCategories);
-    }
-  }, [threads, sortedCategories.length]);
+    const next = Object.keys(threads.reduce((acc, thread) => {
+      const { category } = thread;
+      if (!acc[category]) acc[category] = [];
+      acc[category].push(thread);
+      return acc;
+    }, {} as Record<string, Thread[]>)).sort((a, b) => {
+      if (a === 'Unsorted') return -1;
+      if (b === 'Unsorted') return 1;
+      return a.localeCompare(b);
+    });
+    setSortedCategories(next);
+  }, [threads]);
 
   const filteredThreads = React.useMemo(() => {
     const activeCategories = Object.keys(selectedCategories).filter(k => selectedCategories[k]);

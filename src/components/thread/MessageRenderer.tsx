@@ -258,11 +258,15 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     if (!sel || sel.rangeCount === 0) return;
     const userRange = sel.getRangeAt(0).cloneRange();
 
-    // Strategy: split selection by meaningful block-level elements and create a
+    // Strategy: split selection by meaningful text containers and create a
     // separate highlight for each contiguous text segment. Group them with a groupId.
     const groupId = `grp-${Date.now()}`;
-    // Get all potential highlight targets including footnote references
-    const allBlocks = Array.from(messageRef.current.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,strong,em,code,sup,a[href^="#fn"],a[href^="#user-content-fn"]')) as HTMLElement[];
+    // Get potential text containers: limit to top-level blocks to avoid duplicates
+    const candidates = Array.from(
+      messageRef.current.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li')
+    ) as HTMLElement[];
+    // Keep only topmost elements (skip nested ones like strong within li)
+    const allBlocks = candidates.filter(el => !candidates.some(other => other !== el && other.contains(el)));
     const blocks = allBlocks.filter(block => {
       // Only include blocks that have meaningful text content
       const blockText = block.textContent?.trim() || '';
@@ -360,30 +364,34 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     console.log('Creating grouped highlights: count=', ranges.length);
     console.log('Group ID:', groupId);
     
-    // Create highlights with proper offset calculation
-    ranges.forEach(({ range, text }, index) => {
+    // Create highlights by locating each segment in the container's normalized text, sequentially
+    const containerNormalized = (containerEl.textContent || '').replace(/\s+/g, ' ').trim();
+    let searchCursor = 0;
+    ranges.forEach(({ text }, index) => {
       if (!text) return;
-      
-      // Calculate proper start offset by finding text in full container
-      const startOffsetInContainer = calculateTextOffset(containerEl, range.startContainer, range.startOffset);
-      if (startOffsetInContainer === -1) {
-        console.warn('Could not calculate start offset for text:', text.substring(0, 50));
+      const normalizedText = text.replace(/\s+/g, ' ').trim();
+      const foundAt = containerNormalized.indexOf(normalizedText, searchCursor);
+      if (foundAt === -1) {
+        console.warn('Could not locate highlight text in container:', normalizedText.substring(0, 60));
         return;
       }
+      const start = foundAt;
+      const end = foundAt + normalizedText.length;
+      searchCursor = end + 1;
       
       const highlightData = {
         messageId: message.id,
-        text,
-        start: startOffsetInContainer,
-        end: startOffsetInContainer + text.length,
+        text: normalizedText,
+        start,
+        end,
         color,
         groupId,
       };
       
       console.log(`Creating highlight ${index + 1}/${ranges.length}:`, {
-        text: text.substring(0, 50) + (text.length > 50 ? '...' : ''),
-        start: startOffsetInContainer,
-        end: startOffsetInContainer + text.length,
+        text: normalizedText.substring(0, 50) + (normalizedText.length > 50 ? '...' : ''),
+        start,
+        end,
         groupId
       });
       
@@ -406,6 +414,15 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
           groupId: h.groupId || 'no-group'
         })));
         applyNormalizedHighlights(messageRef.current, messageHighlights);
+
+        // Revert: remove reference placeholders; no click behavior
+        const container = messageRef.current;
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+        let n: Node | null;
+        while ((n = walker.nextNode())) {
+          const t = n as Text;
+          if (t.data) t.data = t.data.replace(/\[\[FNREF:(\d+)\]\]/g, '');
+        }
     }
   }, [highlights, message.id, message.text]);
   
@@ -480,6 +497,32 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
                     }}
                   >
                     <a {...props} href={href}>{children}</a>
+                  </sup>
+                );
+              }
+              // Convert placeholder [[FNREF:n]] generated in references into clickable superscripts
+              if (!href && Array.isArray(children) && typeof children[0] === 'string' && /\[\[FNREF:(\d+)\]\]/.test(String(children[0]))) {
+                const match = (children[0] as string).match(/\[\[FNREF:(\d+)\]\]/);
+                const num = match ? match[1] : '';
+                const superscriptMap: Record<string, string> = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+                const toSuperscript = (n: string) => n.split('').map(d => superscriptMap[d] || d).join('');
+                return (
+                  <sup
+                    className="text-primary cursor-pointer hover:underline"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const candidates = Array.from(document.querySelectorAll('sup')) as HTMLElement[];
+                      const target = candidates.find(el => el.textContent === toSuperscript(num));
+                      if (target) {
+                        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        target.style.transition = 'background-color 0.3s ease';
+                        target.style.backgroundColor = '#fef3c7';
+                        setTimeout(() => { target.style.backgroundColor = ''; }, 1500);
+                      }
+                    }}
+                  >
+                    {toSuperscript(num)}
                   </sup>
                 );
               }

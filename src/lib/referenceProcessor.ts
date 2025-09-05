@@ -279,13 +279,14 @@ export function extractReferencesFromText(
                     if (foundReferences) break;
                 }
 
-                // Rebuild reference section as readable bullet list (no numbers)
+                // Rebuild reference section as bullet list with superscript numbers at the end
                 if (extractedReferences.length > 0) {
                     const sortedReferences = extractedReferences.sort((a, b) => a.number - b.number);
+                    const superscriptMap: Record<string, string> = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+                    const toSuperscript = (n: number) => String(n).split('').map(d => superscriptMap[d] || d).join('');
                     const readableSection = sortedReferences
-                        .map(ref => `- ${ref.text}`)
+                        .map(ref => `- ${ref.text} ${toSuperscript(ref.number)}`)
                         .join('\n');
-                    // Ensure proper Markdown list rendering: blank line before list
                     const rebuilt = `References:\n\n${readableSection}\n`;
                     processedText = processedText.replace(refSectionMatch[0], rebuilt);
                 }
@@ -379,6 +380,15 @@ export function extractReferencesFromText(
             }
             return match;
         });
+    }
+
+    // Convert footnote-style citations [^n] to unicode superscripts in-text
+    try {
+        const superscriptMap: Record<string, string> = { '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+        const toSuperscript = (numStr: string) => numStr.split('').map(d => superscriptMap[d] || d).join('');
+        processedText = processedText.replace(/\[\^(\d+)\]/g, (_, n: string) => toSuperscript(n));
+    } catch (e) {
+        console.warn('Superscript conversion failed:', e);
     }
 
     return {
